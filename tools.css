@@ -29,6 +29,7 @@
 
 .tool-panel { max-width: 400px; margin: 0 auto; padding: 20px; }
 #tool-link { max-width: 520px; }
+#tool-music { max-width: 520px; }
 
 /* Kalkulator */
 .calc-screen {
