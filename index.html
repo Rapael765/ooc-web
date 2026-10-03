@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#2e7bff">
+    <title>OOC Official - Circle Profile Web</title>
+    <meta name="description" content="OOC Circle: web profil, galeri, agenda, dan buku tamu circle OOC.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://ooc-web.vercel.app/">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="OOC Official - Circle Profile Web">
+    <meta property="og:description" content="OOC Circle: web profil, galeri, agenda, dan buku tamu circle OOC.">
+    <meta property="og:url" content="https://ooc-web.vercel.app/">
+    <meta property="og:image" content="https://ooc-web.vercel.app/foto-ooc.jpg">
+    <link href="https://fonts.googleapis.com/css2?family=Bangers&family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="bg-deco" aria-hidden="true">
+        <div class="burst b1"></div>
+        <div class="burst b2"></div>
+    </div>
+
+    <a href="#home" class="pill card brand" data-page="home">OOC <b>Circle</b></a>
+
+    <!-- Tab bar bawah (tombol Tools ditambahkan otomatis oleh tools.js) -->
+    <nav class="pill card dock" id="dock" aria-label="Menu utama">
+        <span class="dock-indicator" id="dockIndicator" aria-hidden="true"></span>
+        <a href="#home" data-page="home" class="active"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span>Beranda</a>
+        <a href="#about" data-page="about"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3l1.9 5.1L18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.9z"/><path d="M19 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg></span>Tentang</a>
+        <a href="#members" data-page="members"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M16.2 14.3c2.9-.3 4.8 1.7 4.8 4.7"/></svg></span>Anggota</a>
+        <a href="#gallery" data-page="gallery"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3.5"/><circle cx="9" cy="10" r="1.7"/><path d="M3.5 17l5-4.5 4 3.5 3-2.5 5 4"/></svg></span>Galeri</a>
+        <a href="#agenda" data-page="agenda"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3.5"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></span>Agenda</a>
+        <a href="#guestbook" data-page="guestbook"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-8l-5 4v-4H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/></svg></span>Buku Tamu</a>
+    </nav>
+
+    <main>
+        <!-- ============ BERANDA ============ -->
+        <section class="page active" id="page-home">
+            <div class="hero">
+                <div class="hero-left card">
+                    <span class="sticker">Developer @zett609</span>
+                    <h1>KAMI ADALAH<br><span class="typing" id="typing"></span></h1>
+                    <p class="lead">Platform eksklusif circle modern. Wadah interaksi, tempat merajut solidaritas, dan pusat dokumentasi kebersamaan yang solid serta berkelas.</p>
+                    <div class="hero-actions">
+                        <a href="#members" data-page="members" class="btn btn-primary">LIHAT ANGGOTA</a>
+                        <a href="#about" data-page="about" class="btn">PELAJARI LEBIH</a>
+                    </div>
+                </div>
+                <div class="hero-right card">
+                    <div class="bubble">Halo, Kita OOC!</div>
+                    <div class="photo">
+                        <img src="foto-ooc.jpg" alt="Foto bersama anggota OOC di cermin" style="object-position: center 58%;">
+                    </div>
+                    <div class="hero-cap"><span>🔥 Solid Tanpa Batas</span><span>Active!</span></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ TENTANG ============ -->
+        <section class="page" id="page-about">
+            <div class="page-head">
+                <h2>TENTANG OOC</h2>
+                <p>Kenali circle kami lewat angka dan cerita singkat</p>
+            </div>
+            <div class="stats">
+                <div class="stat card"><h3 data-count="9" data-pad="2">09</h3><p>Member Inti</p></div>
+                <div class="stat card"><h3 data-count="100" data-suffix="%">100%</h3><p>Solidaritas</p></div>
+                <div class="stat card"><h3 data-count="50" data-suffix="+">50+</h3><p>Momen Tersimpan</p></div>
+                <div class="stat card"><h3>24/7</h3><p>Keaktifan Circle</p></div>
+            </div>
+            <div class="about-card card">
+                <h3>SIAPA KAMI?</h3>
+                <p>OOC adalah circle pertemanan yang dibangun di atas kebersamaan. Di sini kami saling dukung, berbagi cerita, dan menyimpan momen-momen terbaik bersama.</p>
+                <a href="#members" data-page="members" class="btn btn-primary">KENALAN SAMA ANGGOTA</a>
+            </div>
+        </section>
+
+        <!-- ============ ANGGOTA ============ -->
+        <section class="page" id="page-members">
+            <div class="page-head">
+                <h2>ANGGOTA OOC</h2>
+                <p>Ketuk kartu untuk lihat profil, atau langsung klik tombol IG / TikTok</p>
+            </div>
+            <div class="toolbar">
+                <input class="search" id="searchMember" type="search" placeholder="🔍 Cari nama anggota..." aria-label="Cari anggota">
+            </div>
+            <div class="members" id="membersGrid"></div>
+        </section>
+
+        <!-- ============ GALERI ============ -->
+        <section class="page" id="page-gallery">
+            <div class="page-head">
+                <h2>GALERI MOMEN</h2>
+                <p>Ketuk foto untuk memperbesar. Foto yang diupload bisa dilihat semua orang.</p>
+            </div>
+            <div class="toolbar">
+                <button class="btn btn-primary" id="openPhotoForm" type="button">＋ UPLOAD FOTO</button>
+            </div>
+            <div class="gallery" id="galleryGrid"></div>
+        </section>
+
+        <!-- ============ AGENDA ============ -->
+        <section class="page" id="page-agenda">
+            <div class="page-head">
+                <h2>AGENDA CIRCLE</h2>
+                <p>Atur jadwal kumpul dan acara OOC berikutnya</p>
+            </div>
+            <div class="countdown card">
+                <small>Acara berikutnya</small>
+                <h3 id="nextTitle">-</h3>
+                <div class="timer" id="timer">
+                    <div><b id="cdD">0</b><span>HARI</span></div>
+                    <div><b id="cdH">00</b><span>JAM</span></div>
+                    <div><b id="cdM">00</b><span>MENIT</span></div>
+                    <div><b id="cdS">00</b><span>DETIK</span></div>
+                </div>
+            </div>
+            <div class="toolbar">
+                <button class="btn btn-primary" id="openEventForm" type="button">＋ TAMBAH AGENDA</button>
+            </div>
+            <div class="agenda" id="agendaList"></div>
+        </section>
+
+        <!-- ============ BUKU TAMU ============ -->
+        <section class="page" id="page-guestbook">
+            <div class="page-head">
+                <h2>BUKU TAMU</h2>
+                <p>Tinggalkan pesan, kesan, atau jejak kunjunganmu di web OOC</p>
+            </div>
+            <form class="form-card card" id="commentForm">
+                <div class="field">
+                    <label for="visitorName">Nama / Panggilan</label>
+                    <input class="input" type="text" id="visitorName" placeholder="Masukkan nama kamu..." maxlength="40" required>
+                </div>
+                <div class="field">
+                    <label for="visitorMsg">Pesan untuk OOC</label>
+                    <textarea class="input" id="visitorMsg" placeholder="Tulis pesan berkesan di sini..." maxlength="300" required></textarea>
+                </div>
+                <div class="emoji-pick" id="emojiPick" role="group" aria-label="Pilih emoji">
+                    <button type="button" class="on" data-e="😊">😊</button>
+                    <button type="button" data-e="🔥">🔥</button>
+                    <button type="button" data-e="💙">💙</button>
+                    <button type="button" data-e="🎉">🎉</button>
+                    <button type="button" data-e="😎">😎</button>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">KIRIM PESAN</button>
+            </form>
+            <div class="guest-list" id="guestList"></div>
+        </section>
+
+        <!-- Halaman Tools dibuat otomatis oleh tools.js (tab Motion Photo & Quote Chat oleh studio.js) -->
+    </main>
+
+    <footer>&copy; 2026 OOC Circle Official · Gaya Comic 3D</footer>
+
+    <!-- Modal profil anggota -->
+    <div class="overlay" id="memberModal" aria-hidden="true">
+        <div class="sheet card" role="dialog" aria-modal="true" aria-labelledby="mName">
+            <div class="avatar" id="mAvatar"></div>
+            <h3 id="mName"></h3>
+            <span class="role" id="mRole"></span>
+            <p class="bio" id="mBio"></p>
+            <div class="social-row" id="mSocial"></div>
+            <button class="btn btn-block" id="mCopy" type="button">📋 SALIN USERNAME IG</button>
+            <button class="btn btn-block" data-close type="button">TUTUP</button>
+        </div>
+    </div>
+
+    <!-- Modal upload foto -->
+    <div class="overlay" id="photoModal" aria-hidden="true">
+        <form class="sheet card" id="photoForm" role="dialog" aria-modal="true" aria-labelledby="photoTitle">
+            <h3 id="photoTitle">UPLOAD FOTO</h3>
+            <div class="field" style="margin-top:14px">
+                <label for="photoFile">Pilih foto (boleh banyak)</label>
+                <input class="input" type="file" id="photoFile" accept="image/*" multiple required>
+                <p class="hint" id="photoInfo">Foto otomatis dikecilkan supaya hemat penyimpanan.</p>
+            </div>
+            <div class="field">
+                <label for="photoCap">Keterangan (opsional)</label>
+                <input class="input" type="text" id="photoCap" placeholder="Contoh: Kumpul di rumah Daffa" maxlength="60">
+            </div>
+            <div class="btn-row">
+                <button class="btn" data-close type="button">BATAL</button>
+                <button class="btn btn-primary" id="photoSave" type="submit">SIMPAN</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Modal tambah agenda -->
+    <div class="overlay" id="eventModal" aria-hidden="true">
+        <form class="sheet card" id="eventForm" role="dialog" aria-modal="true" aria-labelledby="eventTitleH">
+            <h3 id="eventTitleH">TAMBAH AGENDA</h3>
+            <div class="field" style="margin-top:14px">
+                <label for="evTitle">Nama acara</label>
+                <input class="input" type="text" id="evTitle" placeholder="Contoh: Kumpul Bareng" maxlength="60" required>
+            </div>
+            <div class="field">
+                <label for="evDate">Tanggal &amp; jam</label>
+                <input class="input" type="datetime-local" id="evDate" required>
+            </div>
+            <div class="field">
+                <label for="evPlace">Tempat (opsional)</label>
+                <input class="input" type="text" id="evPlace" placeholder="Contoh: Rumah Mila" maxlength="60">
+            </div>
+            <div class="btn-row">
+                <button class="btn" data-close type="button">BATAL</button>
+                <button class="btn btn-primary" type="submit">SIMPAN</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Modal konfirmasi hapus -->
+    <div class="overlay" id="confirmModal" aria-hidden="true">
+        <div class="sheet card" role="alertdialog" aria-modal="true" aria-labelledby="cMsg">
+            <h3>YAKIN?</h3>
+            <p id="cMsg" style="margin:8px 0 18px"></p>
+            <div class="btn-row">
+                <button class="btn" id="cNo" type="button">BATAL</button>
+                <button class="btn btn-primary" id="cYes" type="button">YA, HAPUS</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lightbox -->
+    <div class="overlay" id="lightbox" aria-hidden="true">
+        <img class="lightbox-img" id="lbImg" alt="">
+    </div>
+
+    <div class="toast" id="toast" role="status"></div>
+
+    <script src="script.js"></script>
+    <script src="tools.js"></script>
+    <script src="studio.js"></script>
+    <script src="notify.js"></script>
+</body>
+</html>
