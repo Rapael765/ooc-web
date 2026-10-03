@@ -424,4 +424,4 @@ footer { text-align: center; padding: 0 6% 110px; font-weight: 800; font-size: 0
 @media (prefers-reduced-motion: reduce) {
     .burst, .typing, .page.active, .sheet, .overlay.open { animation: none; }
     * { transition: none !important; }
-  }
+}
