@@ -120,21 +120,28 @@ module.exports = handler(async (req, res) => {
     return res.status(400).json({ error: 'Pesan kosong' });
   }
 
-  const ask = USE_OPENAI_STYLE ? askOpenAIStyle : askAnthropic;
+  const rawAsk = USE_OPENAI_STYLE ? askOpenAIStyle : askAnthropic;
+  const ask = (model, msgs) => rawAsk(model, msgs).catch(e => ({
+    ok: false, status: 0, data: { error: { message: e && e.name === 'AbortError' ? 'waktu habis' : (e && e.message) || 'gagal terhubung' } }
+  }));
   let r = await ask(MODEL, messages);
-  if (!r.ok && FALLBACK && FALLBACK !== MODEL && (r.status === 429 || r.status === 404 || r.status >= 500 || r.status === 400)) {
+  if (!r.ok && FALLBACK && FALLBACK !== MODEL && (r.status === 0 || r.status === 429 || r.status === 404 || r.status >= 500 || r.status === 400)) {
     r = await ask(FALLBACK, messages);
   }
 
   if (!r.ok) {
+    // Alasan singkat dari penyedia AI (tidak berisi kunci) supaya mudah dicari penyebabnya
+    const d = r.data || {};
+    const why = String((d.error && (d.error.message || d.error.type || d.error)) || d.message || '').replace(/\s+/g, ' ').slice(0, 140);
+    const info = ' (kode ' + r.status + (why ? ': ' + why : '') + ')';
     console.error('AI error', r.status, JSON.stringify(r.data).slice(0, 300));
     if (r.status === 401 || r.status === 403) {
-      return res.status(500).json({ error: 'Kunci AI di server tidak valid. Periksa AI_API_KEY di Vercel.' });
+      return res.status(500).json({ error: 'Kunci AI di server tidak valid. Periksa AI_API_KEY di Vercel.' + info });
     }
     if (r.status === 429) {
-      return res.status(503).json({ error: 'OOC AI sedang penuh (kuota habis). Coba lagi nanti.' });
+      return res.status(503).json({ error: 'OOC AI sedang penuh (kuota habis). Coba lagi nanti.' + info });
     }
-    return res.status(502).json({ error: 'OOC AI sedang bermasalah. Coba lagi sebentar lagi.' });
+    return res.status(502).json({ error: 'OOC AI sedang bermasalah.' + info });
   }
 
   const reply = String(textOf(r) || '').trim();
