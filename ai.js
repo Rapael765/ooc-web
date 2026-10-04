@@ -1,150 +1,164 @@
-const { handler, clean } = require('./_lib');
+/* =====================================================
+   OOC - Tool "OOC AI" (chat)
+   Dimuat SEBELUM tools.js. tools.js memanggil OOCAi.mount(wadah).
+   Pesan dikirim ke /api/ai; riwayat chat disimpan di browser ini saja.
+   ===================================================== */
+(function () {
+    'use strict';
+    if (window.OOCAi) return;
 
-// Endpoint "OOC AI": meneruskan chat ke penyedia AI. Kunci API tersimpan di Vercel, tidak di browser.
-//
-// Variabel di Vercel (Settings > Environment Variables). Pilih SALAH SATU penyedia:
-//   A) Gratis (disarankan):  AI_API_KEY = kunci dari console.groq.com
-//        (opsional) AI_BASE_URL  default https://api.groq.com/openai/v1
-//        (opsional) AI_MODEL     default llama-3.3-70b-versatile
-//        (opsional) AI_FALLBACK_MODEL default llama-3.1-8b-instant (dipakai saat kuota model utama habis)
-//   B) Anthropic (berbayar): ANTHROPIC_API_KEY = kunci dari console.anthropic.com
-//        (opsional) AI_MODEL     default claude-haiku-4-5-20251001
-// Jika dua-duanya ada, AI_API_KEY dipakai lebih dulu.
+    var KEY = 'ooc-ai-chat';
+    var MAX_SAVED = 24;
+    var SUGGEST = ['Jelaskan apa itu AI', 'Buatkan caption foto kumpul', 'Ide acara kumpul circle', 'Bantu perbaiki kalimat ini'];
 
-const AI_KEY = (process.env.AI_API_KEY || process.env.GROQ_API_KEY || '').trim();
-const AI_BASE = (process.env.AI_BASE_URL || 'https://api.groq.com/openai/v1').trim().replace(/\/$/, '');
-const ANTHROPIC_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
-const USE_OPENAI_STYLE = !!AI_KEY;
-const MODEL = (process.env.AI_MODEL || (USE_OPENAI_STYLE ? 'llama-3.3-70b-versatile' : 'claude-haiku-4-5-20251001')).trim();
-const FALLBACK = (process.env.AI_FALLBACK_MODEL || (USE_OPENAI_STYLE ? 'llama-3.1-8b-instant' : '')).trim();
-
-const MAX_TURNS = 12;       // jumlah pesan riwayat yang dikirim
-const MAX_CHARS = 2000;     // panjang tiap pesan
-const MAX_TOTAL = 8000;     // total karakter riwayat
-const MAX_TOKENS = 800;     // panjang jawaban
-const PER_MIN = 10;         // batas permintaan per IP per menit
-const PER_DAY = 120;        // batas permintaan per IP per hari
-
-const SYSTEM = [
-  'Kamu adalah OOC AI, asisten di website OOC Circle (circle pertemanan).',
-  'Jawab dalam Bahasa Indonesia yang santai, ramah, dan jelas, kecuali pengguna memakai bahasa lain.',
-  'Mulai dengan jawaban singkat; beri detail hanya kalau diminta atau memang perlu.',
-  'Jangan mengarang fakta. Kalau tidak tahu atau tidak yakin, katakan terus terang.',
-  'Kamu tidak punya akses internet dan tidak bisa membuka link atau file.',
-  'Tolak dengan sopan permintaan yang berbahaya, ilegal, atau merugikan orang lain.',
-  'Kalau ditanya kamu model apa, jawab bahwa kamu OOC AI dan tidak tahu detail teknisnya.'
-].join(' ');
-
-/* ---------- Pembatas sederhana (per instance server) ---------- */
-const hits = new Map();
-function limited(ip) {
-  const now = Date.now();
-  const list = (hits.get(ip) || []).filter(t => now - t < 24 * 3600 * 1000);
-  const lastMin = list.filter(t => now - t < 60 * 1000).length;
-  if (lastMin >= PER_MIN || list.length >= PER_DAY) { hits.set(ip, list); return true; }
-  list.push(now);
-  hits.set(ip, list);
-  if (hits.size > 5000) hits.clear();
-  return false;
-}
-
-function fetchJson(url, opts) {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 25000);
-  return fetch(url, { ...opts, signal: ctl.signal })
-    .then(async r => {
-      const text = await r.text();
-      let data = null;
-      try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
-      return { ok: r.ok, status: r.status, data };
-    })
-    .finally(() => clearTimeout(timer));
-}
-
-async function askOpenAIStyle(model, messages) {
-  return fetchJson(AI_BASE + '/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + AI_KEY },
-    body: JSON.stringify({
-      model,
-      max_tokens: MAX_TOKENS,
-      temperature: 0.7,
-      messages: [{ role: 'system', content: SYSTEM }, ...messages]
-    })
-  });
-}
-
-async function askAnthropic(model, messages) {
-  return fetchJson('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model, max_tokens: MAX_TOKENS, system: SYSTEM, messages })
-  });
-}
-
-function textOf(r) {
-  const d = r.data || {};
-  if (USE_OPENAI_STYLE) return d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
-  return d.content && d.content[0] && d.content[0].text;
-}
-
-module.exports = handler(async (req, res) => {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-  if (!AI_KEY && !ANTHROPIC_KEY) {
-    return res.status(500).json({ error: 'OOC AI belum diaktifkan: isi AI_API_KEY di Vercel' });
-  }
-
-  const ip = String(req.headers['x-forwarded-for'] || req.socket && req.socket.remoteAddress || 'x').split(',')[0].trim();
-  if (limited(ip)) {
-    return res.status(429).json({ error: 'Terlalu banyak pesan. Tunggu sebentar lalu coba lagi.' });
-  }
-
-  // Rapikan & batasi riwayat chat
-  const raw = Array.isArray(req.body && req.body.messages) ? req.body.messages : [];
-  let messages = raw
-    .filter(m => m && (m.role === 'user' || m.role === 'assistant'))
-    .map(m => ({ role: m.role, content: clean(m.content, MAX_CHARS) }))
-    .filter(m => m.content)
-    .slice(-MAX_TURNS);
-  while (messages.length && messages[0].role !== 'user') messages.shift();
-  let total = 0;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    total += messages[i].content.length;
-    if (total > MAX_TOTAL) { messages = messages.slice(i + 1); break; }
-  }
-  while (messages.length && messages[0].role !== 'user') messages.shift();
-  if (!messages.length || messages[messages.length - 1].role !== 'user') {
-    return res.status(400).json({ error: 'Pesan kosong' });
-  }
-
-  const rawAsk = USE_OPENAI_STYLE ? askOpenAIStyle : askAnthropic;
-  const ask = (model, msgs) => rawAsk(model, msgs).catch(e => ({
-    ok: false, status: 0, data: { error: { message: e && e.name === 'AbortError' ? 'waktu habis' : (e && e.message) || 'gagal terhubung' } }
-  }));
-  let r = await ask(MODEL, messages);
-  if (!r.ok && FALLBACK && FALLBACK !== MODEL && (r.status === 0 || r.status === 429 || r.status === 404 || r.status >= 500 || r.status === 400)) {
-    r = await ask(FALLBACK, messages);
-  }
-
-  if (!r.ok) {
-    // Alasan singkat dari penyedia AI (tidak berisi kunci) supaya mudah dicari penyebabnya
-    const d = r.data || {};
-    const why = String((d.error && (d.error.message || d.error.type || d.error)) || d.message || '').replace(/\s+/g, ' ').slice(0, 140);
-    const info = ' (kode ' + r.status + (why ? ': ' + why : '') + ')';
-    console.error('AI error', r.status, JSON.stringify(r.data).slice(0, 300));
-    if (r.status === 401 || r.status === 403) {
-      return res.status(500).json({ error: 'Kunci AI di server tidak valid. Periksa AI_API_KEY di Vercel.' + info });
+    function esc(s) {
+        return String(s).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
     }
-    if (r.status === 429) {
-      return res.status(503).json({ error: 'OOC AI sedang penuh (kuota habis). Coba lagi nanti.' + info });
-    }
-    return res.status(502).json({ error: 'OOC AI sedang bermasalah.' + info });
-  }
 
-  const reply = String(textOf(r) || '').trim();
-  if (!reply) return res.status(502).json({ error: 'OOC AI tidak memberi jawaban. Coba ulangi.' });
-  res.status(200).json({ reply });
-});
+    // Format sederhana & aman: ```kode```, `kode`, **tebal**
+    function fmt(text) {
+        var parts = String(text).split('```');
+        return parts.map(function (p, i) {
+            if (i % 2 === 1) {
+                var nl = p.indexOf('\n');
+                var body = nl > -1 && nl < 20 && !/\s/.test(p.slice(0, nl).trim()) ? p.slice(nl + 1) : p;
+                return '<pre><code>' + esc(body.replace(/^\n+|\n+$/g, '')) + '</code></pre>';
+            }
+            return esc(p)
+                .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+                .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+        }).join('');
+    }
+
+    function mount(box) {
+        if (box.__ai) return;
+        box.__ai = true;
+
+        box.innerHTML =
+            '<div class="ai-head"><b>OOC AI</b><button class="btn btn-sm" id="aiClear" type="button">HAPUS CHAT</button></div>' +
+            '<div class="ai-log" id="aiLog" aria-live="polite"></div>' +
+            '<div class="ai-chips" id="aiChips"></div>' +
+            '<div class="ai-form">' +
+                '<textarea class="input" id="aiInput" rows="1" maxlength="1000" placeholder="Tanya apa saja ke OOC AI..." enterkeyhint="send"></textarea>' +
+                '<button class="btn btn-primary" id="aiSend" type="button" aria-label="Kirim">KIRIM</button>' +
+            '</div>' +
+            '<p class="hint ai-note">Jawaban AI bisa keliru. Jangan kirim data pribadi atau password.</p>';
+
+        var q = function (s) { return box.querySelector(s); };
+        var log = q('#aiLog'), input = q('#aiInput'), sendBtn = q('#aiSend'), chips = q('#aiChips');
+        var history = [], busy = false;
+
+        try { history = JSON.parse(localStorage.getItem(KEY) || '[]'); if (!Array.isArray(history)) history = []; } catch (e) { history = []; }
+
+        function save() {
+            try { localStorage.setItem(KEY, JSON.stringify(history.slice(-MAX_SAVED))); } catch (e) {}
+        }
+        function toBottom() { log.scrollTop = log.scrollHeight; }
+
+        function bubble(role, text, isErr) {
+            var row = document.createElement('div');
+            row.className = 'ai-msg ' + (role === 'user' ? 'me' : 'bot') + (isErr ? ' err' : '');
+            var b = document.createElement('div');
+            b.className = 'ai-bubble';
+            if (role === 'user') b.textContent = text; else b.innerHTML = fmt(text);
+            row.appendChild(b);
+            if (role !== 'user' && !isErr) {
+                var cp = document.createElement('button');
+                cp.type = 'button'; cp.className = 'ai-copy'; cp.textContent = 'SALIN';
+                cp.addEventListener('click', function () {
+                    var done = function () { toast('Jawaban disalin'); };
+                    if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () { toast('Gagal menyalin'); });
+                    else toast('Gagal menyalin');
+                });
+                row.appendChild(cp);
+            }
+            log.appendChild(row);
+            toBottom();
+            return row;
+        }
+
+        function render() {
+            log.innerHTML = '';
+            if (!history.length) {
+                var hello = document.createElement('div');
+                hello.className = 'ai-hello';
+                hello.innerHTML = '<span>🤖</span><p>Halo! Aku <b>OOC AI</b>. Tanya apa saja, atau pilih ide di bawah.</p>';
+                log.appendChild(hello);
+            } else {
+                history.forEach(function (m) { bubble(m.role, m.content); });
+            }
+            chips.hidden = history.length > 0;
+        }
+
+        chips.innerHTML = '';
+        SUGGEST.forEach(function (t) {
+            var c = document.createElement('button');
+            c.type = 'button'; c.className = 'ai-chip'; c.textContent = t;
+            c.addEventListener('click', function () { input.value = t; input.focus(); });
+            chips.appendChild(c);
+        });
+
+        function grow() {
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 130) + 'px';
+        }
+        input.addEventListener('input', grow);
+
+        async function send() {
+            if (busy) return;
+            var text = input.value.trim();
+            if (!text) return;
+            busy = true;
+            sendBtn.disabled = true;
+
+            var hello = log.querySelector('.ai-hello');
+            if (hello) hello.remove();
+            chips.hidden = true;
+
+            history.push({ role: 'user', content: text });
+            bubble('user', text);
+            input.value = ''; grow();
+            save();
+
+            var wait = document.createElement('div');
+            wait.className = 'ai-msg bot';
+            wait.innerHTML = '<div class="ai-bubble ai-dots"><i></i><i></i><i></i></div>';
+            log.appendChild(wait);
+            toBottom();
+
+            try {
+                var r = await api('ai', { method: 'POST', body: { messages: history.slice(-12) } });
+                wait.remove();
+                history.push({ role: 'assistant', content: r.reply });
+                bubble('assistant', r.reply);
+                save();
+            } catch (err) {
+                wait.remove();
+                // pesan error tidak masuk riwayat; pesan pengguna terakhir dibuang dari riwayat kirim berikutnya
+                history.pop();
+                save();
+                bubble('assistant', err.message || 'Gagal terhubung ke OOC AI', true);
+            }
+            busy = false;
+            sendBtn.disabled = false;
+            input.focus();
+        }
+
+        sendBtn.addEventListener('click', send);
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+        });
+        q('#aiClear').addEventListener('click', function () {
+            history = [];
+            save();
+            render();
+            toast('Chat dihapus');
+        });
+
+        render();
+    }
+
+    window.OOCAi = { mount: mount };
+})();
