@@ -63,12 +63,14 @@
         return askPassword(why);
     }
 
-    // Semua permintaan tulis (kecuali kirim pesan buku tamu & foto ke link) otomatis minta password.
+    // Semua permintaan tulis (kecuali kirim pesan buku tamu, foto ke link, dan OOC AI) otomatis minta password.
     const needsAdmin = (path, method) => {
         const base = String(path).split('?')[0];
         if (method === 'GET') return false;
         if (base === 'guestbook' && method === 'POST') return false;
         if (base === 'upload') return false;
+        if (base === 'ai') return false;
+        // if (base === 'apk') return false;   // hapus tanda // di depan baris ini kalau Web to APK mau dibuka untuk semua
         return true;
     };
 
