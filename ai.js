@@ -37,14 +37,17 @@
         box.__ai = true;
 
         box.innerHTML =
-            '<div class="ai-head"><b>OOC AI</b><button class="btn btn-sm" id="aiClear" type="button">HAPUS CHAT</button></div>' +
+            '<div class="ai-head"><b>OOC AI</b></div>' +
             '<div class="ai-log" id="aiLog" aria-live="polite"></div>' +
             '<div class="ai-chips" id="aiChips"></div>' +
             '<div class="ai-form">' +
                 '<textarea class="input" id="aiInput" rows="1" maxlength="1000" placeholder="Tanya apa saja ke OOC AI..." enterkeyhint="send"></textarea>' +
                 '<button class="btn btn-primary" id="aiSend" type="button" aria-label="Kirim">KIRIM</button>' +
             '</div>' +
-            '<p class="hint ai-note">Jawaban AI bisa keliru. Jangan kirim data pribadi atau password.</p>';
+            '<div class="ai-foot" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px">' +
+                '<p class="hint" style="margin:0;flex:1">Jawaban AI bisa keliru. Jangan kirim data pribadi atau password.</p>' +
+                '<button class="btn btn-sm" id="aiClear" type="button">HAPUS CHAT</button>' +
+            '</div>';
 
         var q = function (s) { return box.querySelector(s); };
         var log = q('#aiLog'), input = q('#aiInput'), sendBtn = q('#aiSend'), chips = q('#aiChips');
