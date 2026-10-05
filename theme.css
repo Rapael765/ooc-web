@@ -1,0 +1,131 @@
+/* =====================================================
+   OOC Circle - Tampilan "Biasa" (bukan komik)
+   Aktif hanya kalau <html> punya class "theme-normal".
+   Tombol pengganti ada di pojok kanan atas (theme.js).
+   OOCgram (.g-root) tidak ikut berubah.
+   ===================================================== */
+
+/* ---------- Tombol ganti tampilan (selalu ada) ---------- */
+.th-btn {
+    position: fixed; top: 16px; right: 70px; z-index: 101;
+    width: 42px; height: 42px; padding: 0; display: grid; place-items: center; cursor: pointer;
+    background: #fff; color: var(--ink, #0d1b3d);
+    border: 3px solid var(--ink, #0d1b3d); border-radius: 50%;
+    box-shadow: 3px 3px 0 var(--ink, #0d1b3d);
+    transition: transform .12s, box-shadow .12s;
+}
+.th-btn:active { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--ink, #0d1b3d); }
+.th-btn svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 2.2; fill: none; }
+.th-btn svg path { fill: currentColor; }
+
+/* ---------- Warna & variabel ---------- */
+html.theme-normal {
+    --ink: #1f2937;
+    --blue: #2563eb;
+    --blue-dark: #1d4ed8;
+    --sky: #dbeafe;
+    --pale: #f1f5f9;
+    --yellow: #fde68a;
+    --danger: #ef4444;
+    --line: 1px solid #d9dee7;
+    --shadow: 0 6px 20px rgba(15, 23, 42, .08);
+    --shadow-sm: 0 1px 3px rgba(15, 23, 42, .12);
+    --font-title: "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html.theme-normal body {
+    background-image: none !important;
+    background-color: #f3f5f9 !important;
+}
+html.theme-normal .bg-deco { display: none !important; }
+
+/* ---------- Ratakan semua efek komik (kecuali OOCgram) ---------- */
+html.theme-normal *:not(.g-root):not(.g-root *) {
+    text-shadow: none !important;
+    -webkit-text-stroke: 0 !important;
+}
+html.theme-normal [class]:not(.g-root):not(.g-root *) {
+    box-shadow: none !important;
+    border-width: 1px !important;
+    border-color: rgba(15, 23, 42, .14) !important;
+    font-family: var(--font-body) !important;
+}
+
+/* bayangan lembut untuk kartu, dialog, dock */
+html.theme-normal .card:not(.g-root *),
+html.theme-normal .sheet:not(.g-root *),
+html.theme-normal .nf-card:not(.g-root *),
+html.theme-normal .nf-sheet:not(.g-root *),
+html.theme-normal .nf-pwbox:not(.g-root *),
+html.theme-normal .dock:not(.g-root *),
+html.theme-normal .th-btn,
+html.theme-normal .toast {
+    box-shadow: var(--shadow) !important;
+}
+html.theme-normal .btn:not(.g-root *),
+html.theme-normal .del,
+html.theme-normal .search,
+html.theme-normal .input,
+html.theme-normal .timer div,
+html.theme-normal .emoji-pick button {
+    box-shadow: var(--shadow-sm) !important;
+}
+
+/* ---------- Bentuk ---------- */
+html.theme-normal .card:not(.g-root *),
+html.theme-normal .sheet:not(.g-root *) { border-radius: 16px !important; }
+html.theme-normal .btn:not(.g-root *) { border-radius: 10px !important; letter-spacing: 0 !important; }
+html.theme-normal .th-btn { border-color: rgba(15, 23, 42, .14) !important; border-width: 1px !important; }
+
+/* miring-miring komik dimatikan */
+html.theme-normal .brand,
+html.theme-normal .sticker,
+html.theme-normal .hero-right,
+html.theme-normal .bubble,
+html.theme-normal .stat,
+html.theme-normal .member,
+html.theme-normal .shot { transform: none !important; }
+html.theme-normal .member:hover,
+html.theme-normal .shot:hover { transform: translateY(-2px) !important; box-shadow: 0 10px 24px rgba(15, 23, 42, .12) !important; }
+html.theme-normal .btn:hover { transform: none !important; }
+html.theme-normal .btn:active { transform: scale(.98) !important; }
+html.theme-normal .toast { transform: translate(-50%, 30px) !important; }
+html.theme-normal .toast.show { transform: translate(-50%, 0) !important; }
+html.theme-normal .tool-tabs .btn.on { transform: none !important; }
+
+/* ---------- Teks ---------- */
+html.theme-normal h1,
+html.theme-normal h2,
+html.theme-normal h3,
+html.theme-normal h4,
+html.theme-normal .brand,
+html.theme-normal .btn:not(.g-root *),
+html.theme-normal .stat h3,
+html.theme-normal .timer b,
+html.theme-normal .calc-screen b,
+html.theme-normal .avatar,
+html.theme-normal .bubble,
+html.theme-normal .event .date,
+html.theme-normal .role {
+    font-weight: 800 !important;
+    letter-spacing: 0 !important;
+}
+html.theme-normal .page-head h2 {
+    color: var(--ink) !important;
+    font-size: clamp(1.9rem, 6vw, 2.6rem) !important;
+}
+html.theme-normal .hero h1 { font-size: clamp(2.2rem, 7vw, 3.6rem) !important; line-height: 1.1 !important; }
+html.theme-normal .typing { border-right-width: 3px !important; }
+html.theme-normal .stat h3 { font-size: 2.3rem !important; }
+html.theme-normal .brand b { color: var(--blue); }
+html.theme-normal .btn-primary { border-color: transparent !important; }
+html.theme-normal .tool-tabs .btn.on { background: var(--blue) !important; color: #fff !important; border-color: transparent !important; }
+html.theme-normal .calc-key.op { background: #fef3c7 !important; }
+html.theme-normal .input:focus,
+html.theme-normal .search:focus {
+    border-color: var(--blue) !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, .15) !important;
+}
+html.theme-normal .dock a.active { color: #fff; }
+html.theme-normal .dock-indicator { border-color: transparent !important; }
+html.theme-normal .apk-bar i { animation-duration: 1.4s; }

@@ -1,6 +1,6 @@
 /* =====================================================
-   OOC Circle - Tools (Kalkulator + Foto ke Link + Musik + Web to APK + OOC AI)
-   Dimuat SETELAH script.js (dan setelah music.js, apk.js & ai.js). Menambahkan sendiri
+   OOC Circle - Tools (Kalkulator + Foto ke Link + Musik + Web to APK + OOC AI + OOCgram)
+   Dimuat SETELAH script.js (dan setelah music.js, apk.js, ai.js & gram.js). Menambahkan sendiri
    tombol "Tools" di dock bawah dan halaman #tools, jadi index.html cukup
    ditambah 1 baris <script>.
    ===================================================== */
@@ -48,6 +48,7 @@
             <button class="btn" type="button" data-tool="music" role="tab" aria-selected="false">MUSIK</button>
             <button class="btn" type="button" data-tool="apk" role="tab" aria-selected="false">WEB TO APK</button>
             <button class="btn" type="button" data-tool="ai" role="tab" aria-selected="false">OOC AI</button>
+            <button class="btn" type="button" data-tool="gram" role="tab" aria-selected="false">OOCGRAM</button>
         </div>
 
         <div class="tool-panel card" id="tool-calc">
@@ -82,11 +83,13 @@
 
         <div class="tool-panel card" id="tool-apk" hidden></div>
 
-        <div class="tool-panel card" id="tool-ai" hidden></div>`;
+        <div class="tool-panel card" id="tool-ai" hidden></div>
+
+        <div class="tool-panel card" id="tool-gram" hidden></div>`;
     $('main').appendChild(sec);
 
     /* ---------- Pindah antar tool ---------- */
-    const panels = { calc: $('#tool-calc', sec), link: $('#tool-link', sec), music: $('#tool-music', sec), apk: $('#tool-apk', sec), ai: $('#tool-ai', sec) };
+    const panels = { calc: $('#tool-calc', sec), link: $('#tool-link', sec), music: $('#tool-music', sec), apk: $('#tool-apk', sec), ai: $('#tool-ai', sec), gram: $('#tool-gram', sec) };
     $$('.tool-tabs .btn', sec).forEach(b => b.addEventListener('click', () => {
         const t = b.dataset.tool;
         $$('.tool-tabs .btn', sec).forEach(x => {
@@ -133,6 +136,16 @@
     } else {
         // ai.js tidak termuat: sembunyikan tab OOC AI
         $('.tool-tabs [data-tool="ai"]', sec).hidden = true;
+    }
+
+    /* =====================================================
+       OOCGRAM (aplikasi layar penuh ada di gram.js)
+       ===================================================== */
+    if (window.OOCGram) {
+        window.OOCGram.mount(panels.gram);
+    } else {
+        // gram.js tidak termuat: sembunyikan tab OOCgram
+        $('.tool-tabs [data-tool="gram"]', sec).hidden = true;
     }
 
     /* =====================================================

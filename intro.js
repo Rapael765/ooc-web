@@ -5,6 +5,8 @@
 (function () {
     'use strict';
     if (document.getElementById('oocIntro')) return;
+    // tampilan biasa dipilih -> tidak ada intro pintu komik
+    if (document.documentElement.classList.contains('theme-normal')) return;
 
     var NAME = 'OOC';
 
@@ -215,7 +217,7 @@ html.oi-lock, html.oi-lock body { overflow: hidden !important; height: 100%; }
 
 #oocIntro .oi-titlewrap h1 {
     position: relative; font-family: "Bangers", Impact, sans-serif; font-weight: 400;
-    font-size: clamp(6rem, 38vw, 12rem); letter-spacing: .05em; text-indent: .05em; line-height: 1;
+    font-size: clamp(5rem, 29vw, 11rem); letter-spacing: .05em; text-indent: .05em; line-height: 1;
     color: #fff; -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill;
     text-shadow: 6px 6px 0 var(--blue), 10px 10px 0 var(--ink);
     transform: scale(.3) rotate(-10deg); opacity: 0;
