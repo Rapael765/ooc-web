@@ -8,6 +8,7 @@
     'use strict';
     if (window.OOCGram) return;
 
+    const VERSION = 'v2.2';
     const TOKEN_KEY = 'oocgram-token';
     const SEEN_KEY = 'oocgram-seen';
     const store = {
@@ -254,7 +255,7 @@
         authEl.append(el('div', 'g-auth-card',
             txt('div', 'g-logo big', 'OOCgram'),
             txt('p', 'g-sub', 'Bagikan momen bareng circle OOC'),
-            seg, form, hint,
+            seg, form, hint, txt('p', 'g-note-small', 'OOCgram ' + VERSION),
             el('div', '', btn('g-link', 'Kembali ke website OOC', close))));
         root.append(authEl);
     }
@@ -269,15 +270,14 @@
             btn('g-ibtn', '', close, 'close', 'Tutup OOCgram'),
             txt('div', 'g-logo', 'OOCgram'),
             el('div', 'g-top-r',
-                btn('g-ibtn', '', openSearch, 'search', 'Cari orang'),
                 themeBtn,
                 btn('g-ibtn', '', () => show(tab, true), 'refresh', 'Segarkan')));
         view = el('main', 'g-view');
         navEl = el('nav', 'g-nav');
         navInd = el('span', 'g-ind');
         navEl.append(navInd);
-        [['home', 'home', 'Beranda'], ['notes', 'note', 'Catatan'], ['camera', 'plus', 'Kamera'],
-         ['chat', 'send', 'Pesan'], ['me', 'user', 'Profil']].forEach(([id, ic, label]) => {
+        [['home', 'home', 'Beranda'], ['search', 'search', 'Cari'], ['camera', 'plus', 'Kamera'],
+         ['notes', 'note', 'Catatan'], ['chat', 'send', 'Pesan'], ['me', 'user', 'Profil']].forEach(([id, ic, label]) => {
             const b = btn(id === 'camera' ? 'mid' : '', '', () => show(id), ic, label);
             b.dataset.tab = id;
             b.append(label);
@@ -329,7 +329,7 @@
         view.classList.toggle('cam', t === 'camera');
         view.scrollTop = 0;
         moveInd();
-        ({ home: renderHome, notes: renderNotes, camera: renderCamera, chat: renderChat, me: renderMe })[t](force);
+        ({ home: renderHome, search: renderSearch, notes: renderNotes, camera: renderCamera, chat: renderChat, me: renderMe })[t](force);
     }
 
     function enterApp() {
@@ -537,7 +537,7 @@
         if (!feed.posts.length) {
             list.append(scope === 'following'
                 ? el('div', 'g-empty', txt('span', 'big', '👥'),
-                    'Belum ada postingan dari orang yang kamu ikuti. Ketuk tombol 🔍 di atas untuk mencari teman.',
+                    'Belum ada postingan dari orang yang kamu ikuti. Buka tab Cari untuk menemukan teman.',
                     el('div', '', btn('g-link', 'Lihat semua postingan', () => { scope = 'all'; store.set('oocgram-scope', 'all'); feed.posts = []; renderHome(true); })))
                 : el('div', 'g-empty', txt('span', 'big', '📷'),
                     'Belum ada postingan. Ketuk tombol Kamera untuk memposting yang pertama!'));
@@ -993,12 +993,13 @@
         row.addEventListener('keydown', e => { if (e.key === 'Enter') openProfile(u.username); });
         return row;
     }
-    function openSearch() {
+    function renderSearch() {
         const q = el('input', 'g-in');
         q.type = 'search'; q.placeholder = 'Cari nama atau username...'; q.maxLength = 20;
         q.setAttribute('aria-label', 'Cari orang');
-        const list = el('div', 'g-sbody');
-        pushScreen(el('div', '', screenHead('Cari orang'), el('div', 'g-pad', q), list));
+        const list = el('div', '');
+        view.innerHTML = '';
+        view.append(el('div', 'g-pad', txt('h2', 'g-h', 'Cari orang'), q), list);
         let t, n = 0;
         async function load() {
             const my = ++n;
@@ -1015,7 +1016,6 @@
         }
         q.addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 300); });
         load();
-        setTimeout(() => q.focus(), 280);
     }
     async function openFollowList(username, type) {
         const body = el('div', 'g-sbody', el('div', 'g-spin'));
@@ -1088,7 +1088,7 @@
                 });
                 seg.append(b);
             });
-            prof.append(el('div', 'g-theme', txt('small', '', 'Tema tampilan OOCgram'), seg));
+            prof.append(el('div', 'g-theme', txt('small', '', 'Tema tampilan OOCgram'), seg), txt('div', 'g-note-small', 'OOCgram ' + VERSION));
         }
         const grid = el('div', 'g-grid');
         d.posts.forEach(p => {
@@ -1171,7 +1171,7 @@
         cssDone = new Promise(resolve => {
             cssLink = document.createElement('link');
             cssLink.rel = 'stylesheet';
-            cssLink.href = 'gram.css';
+            cssLink.href = 'gram.css?v=' + VERSION;
             cssLink.onload = resolve;
             cssLink.onerror = resolve;
             document.head.appendChild(cssLink);
