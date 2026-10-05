@@ -1,1080 +1,358 @@
-/* =====================================================
-   OOCgram - aplikasi mirip Instagram (layar penuh)
-   Beranda + Story, Catatan, Kamera, Pesan pribadi, Profil.
-   Wajib masuk / daftar akun dulu. Data lewat /api/gram (Supabase).
-   Dimuat SEBELUM tools.js. tools.js memanggil OOCGram.mount(wadah).
-   ===================================================== */
-(function () {
-    'use strict';
-    if (window.OOCGram) return;
+const crypto = require('crypto');
+const { sb, table, clean, handler, SB_URL } = require('./_lib');
 
-    const TOKEN_KEY = 'oocgram-token';
-    const SEEN_KEY = 'oocgram-seen';
-    const store = {
-        get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
-        set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* abaikan */ } },
-        del(k) { try { localStorage.removeItem(k); } catch (e) { /* abaikan */ } }
-    };
+// Backend OOCgram: akun, feed, story, catatan, dan chat pribadi.
+// Memakai Supabase yang sudah terhubung (SUPABASE_URL & SUPABASE_SERVICE_ROLE_KEY).
+// Tabel dibuat sekali lewat SQL Editor di Supabase (lihat file oocgram.sql).
+// (opsional) GRAM_SECRET = teks acak panjang untuk menandatangani sesi login.
 
-    let token = store.get(TOKEN_KEY) || '';
-    let me = null;
-    let root, authEl, appEl, view, layer, navEl, toastEl, badgeEl;
-    let authReset = () => {};
-    let tab = 'home';
-    let cssLink = null, cssDone = null;
-    let screens = [];
-    const timers = {};
-    const cam = { stream: null, facing: 'environment', ui: null };
-    const feed = { posts: [], more: false, loading: false };
-    let storyGroups = [];
-    let home = null;
-    let seen = new Set();
-    try { seen = new Set(JSON.parse(store.get(SEEN_KEY) || '[]')); } catch (e) { seen = new Set(); }
+const SECRET = process.env.GRAM_SECRET ||
+  crypto.createHash('sha256').update('oocgram:' + (process.env.SUPABASE_SERVICE_ROLE_KEY || 'dev')).digest('hex');
+const BUCKET = 'oocgram';
+const DAY = 24 * 3600 * 1000;
+const TOKEN_TTL = 30 * DAY;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const enc = encodeURIComponent;
+const USER_COLS = 'id,username,name,avatar,bio';
 
-    /* ---------- Ikon ---------- */
-    const ICONS = {
-        home: '<svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>',
-        note: '<svg viewBox="0 0 24 24"><path d="M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7l-4 4v-4H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M8 9h8M8 12.5h5"/></svg>',
-        plus: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M12 8v8M8 12h8"/></svg>',
-        send: '<svg viewBox="0 0 24 24"><path d="M21 3 10.5 13.5"/><path d="M21 3l-6.5 18-4-7.5L3 9.5z"/></svg>',
-        user: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>',
-        heart: '<svg viewBox="0 0 24 24"><path d="M12 20.5s-8-4.7-8-10.6A4.6 4.6 0 0 1 12 7a4.6 4.6 0 0 1 8 2.9c0 5.9-8 10.6-8 10.6z"/></svg>',
-        heartFill: '<svg viewBox="0 0 24 24"><path class="fill" d="M12 20.5s-8-4.7-8-10.6A4.6 4.6 0 0 1 12 7a4.6 4.6 0 0 1 8 2.9c0 5.9-8 10.6-8 10.6z"/></svg>',
-        comment: '<svg viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 0 1-12.4 7.5L3.5 20.5l1.1-4.4A8.5 8.5 0 1 1 20.5 12z"/></svg>',
-        back: '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>',
-        close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
-        flip: '<svg viewBox="0 0 24 24"><path d="M4 8h12l-3-3M20 16H8l3 3"/></svg>',
-        image: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M3.5 17l5-4.5 4 3.5 3-2.5 5 4"/></svg>',
-        trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
-        refresh: '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg>',
-        edit: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>'
-    };
+const fail = (status, message) => { const e = new Error(message); e.status = status; return e; };
+const pub = u => ({ id: u.id, username: u.username, name: u.name || u.username, avatar: u.avatar || '', bio: u.bio || '' });
+const uuid = v => { v = String(v || ''); if (!UUID.test(v)) throw fail(400, 'ID tidak valid'); return v; };
 
-    /* ---------- Pembantu DOM ---------- */
-    const el = (tag, cls, ...kids) => {
-        const e = document.createElement(tag);
-        if (cls) e.className = cls;
-        kids.flat().forEach(k => { if (k != null && k !== false) e.append(k); });
-        return e;
-    };
-    const txt = (tag, cls, s) => { const e = el(tag, cls); e.textContent = s; return e; };
-    const icon = name => { const s = document.createElement('span'); s.className = 'g-ic'; s.innerHTML = ICONS[name] || ''; return s; };
-    function btn(cls, label, onClick, iconName, aria) {
-        const b = el('button', cls);
-        b.type = 'button';
-        if (iconName) b.append(icon(iconName));
-        if (label) b.append(label);
-        if (aria) b.setAttribute('aria-label', aria);
-        if (onClick) b.addEventListener('click', onClick);
-        return b;
-    }
-    function field(type, placeholder, auto, max) {
-        const i = el('input', 'g-in');
-        i.type = type; i.placeholder = placeholder;
-        if (auto) i.autocomplete = auto;
-        if (max) i.maxLength = max;
-        i.autocapitalize = 'off';
-        i.spellcheck = false;
-        return i;
-    }
-    function ago(iso) {
-        const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-        if (s < 60) return 'baru saja';
-        if (s < 3600) return Math.floor(s / 60) + ' mnt';
-        if (s < 86400) return Math.floor(s / 3600) + ' j';
-        if (s < 604800) return Math.floor(s / 86400) + ' h';
-        return new Date(iso).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
-    }
-    const PALETTE = ['#f09433', '#e6683c', '#dc2743', '#cc2366', '#bc1888', '#2e7bff', '#22b8a6', '#7a5cff'];
-    function avatar(u, size) {
-        const a = el('span', 'g-av');
-        a.style.width = a.style.height = size + 'px';
-        a.style.fontSize = Math.round(size * 0.42) + 'px';
-        if (u.avatar) {
-            const i = new Image();
-            i.src = u.avatar; i.alt = ''; i.loading = 'lazy';
-            a.append(i);
-        } else {
-            const n = u.name || u.username || '?';
-            a.textContent = n.charAt(0).toUpperCase();
-            let h = 0;
-            for (const c of (u.username || n)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-            a.style.background = PALETTE[h % PALETTE.length];
-        }
-        return a;
-    }
-    function gtoast(msg) {
-        if (!toastEl) return;
-        toastEl.textContent = msg;
-        toastEl.classList.add('show');
-        clearTimeout(timers.toast);
-        timers.toast = setTimeout(() => toastEl.classList.remove('show'), 2600);
-    }
-    function confirmBox(message, yes) {
-        return new Promise(resolve => {
-            const back = el('div', 'g-modal');
-            const done = v => { back.remove(); resolve(v); };
-            const box = el('div', 'g-modalbox', txt('p', '', message),
-                el('div', 'row', btn('g-secondary', 'Batal', () => done(false)), btn('g-secondary g-danger', yes || 'Ya', () => done(true))));
-            back.append(box);
-            back.addEventListener('click', e => { if (e.target === back) done(false); });
-            root.append(back);
-        });
-    }
+/* ---------- Pembatas sederhana (per instance server) ---------- */
+const hits = new Map();
+function limited(key, max, windowMs) {
+  const now = Date.now();
+  const list = (hits.get(key) || []).filter(t => now - t < windowMs);
+  if (list.length >= max) { hits.set(key, list); return true; }
+  list.push(now);
+  hits.set(key, list);
+  if (hits.size > 8000) hits.clear();
+  return false;
+}
 
-    /* ---------- API ---------- */
-    async function call(action, data) {
-        let res;
-        try {
-            res = await fetch('/api/gram', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-gram-token': token },
-                body: JSON.stringify(Object.assign({ action }, data || {}))
-            });
-        } catch (e) { throw new Error('Tidak bisa terhubung ke server'); }
-        let j = null;
-        try { j = await res.json(); } catch (e) { /* abaikan */ }
-        if (res.status === 401 && token && action !== 'login' && action !== 'register') {
-            logoutLocal();
-            throw new Error('Sesi berakhir. Silakan masuk lagi.');
-        }
-        if (!res.ok) throw new Error((j && j.error) || ('Terjadi kesalahan (' + res.status + ')'));
-        return j;
-    }
+/* ---------- Password & sesi ---------- */
+function hashPw(pw) {
+  const salt = crypto.randomBytes(16);
+  const key = crypto.scryptSync(pw, salt, 32);
+  return salt.toString('hex') + ':' + key.toString('hex');
+}
+function checkPw(pw, stored) {
+  const [s, k] = String(stored || '').split(':');
+  if (!s || !k) return false;
+  const key = crypto.scryptSync(pw, Buffer.from(s, 'hex'), 32);
+  const want = Buffer.from(k, 'hex');
+  return want.length === key.length && crypto.timingSafeEqual(key, want);
+}
+const b64 = s => Buffer.from(s).toString('base64url');
+const mac = s => crypto.createHmac('sha256', SECRET).update(s).digest('base64url');
+function sign(userId) {
+  const p = b64(JSON.stringify({ u: userId, e: Date.now() + TOKEN_TTL }));
+  return p + '.' + mac(p);
+}
+function verify(token) {
+  const [p, sig] = String(token || '').split('.');
+  if (!p || !sig) return null;
+  const good = mac(p);
+  if (sig.length !== good.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(good))) return null;
+  try {
+    const d = JSON.parse(Buffer.from(p, 'base64url').toString());
+    if (!d || !UUID.test(d.u) || !(d.e > Date.now())) return null;
+    return d;
+  } catch (e) { return null; }
+}
 
-    /* ---------- Gambar ---------- */
-    function loadImage(src) {
-        return new Promise((ok, bad) => {
-            const i = new Image();
-            i.onload = () => ok(i);
-            i.onerror = () => bad(new Error('Foto tidak bisa dibaca. Coba format JPG atau PNG.'));
-            i.src = src;
-        });
-    }
-    function drawScaled(src, w, h, max, q, square) {
-        let sx = 0, sy = 0, sw = w, sh = h;
-        if (square) { const m = Math.min(w, h); sx = (w - m) / 2; sy = (h - m) / 2; sw = sh = m; }
-        const r = Math.min(1, max / Math.max(sw, sh));
-        const cw = Math.max(1, Math.round(sw * r)), ch = Math.max(1, Math.round(sh * r));
-        const c = document.createElement('canvas');
-        c.width = cw; c.height = ch;
-        const x = c.getContext('2d');
-        x.fillStyle = '#fff';
-        x.fillRect(0, 0, cw, ch);
-        x.drawImage(src, sx, sy, sw, sh, 0, 0, cw, ch);
-        return c.toDataURL('image/jpeg', q);
-    }
-    async function fileToJpeg(file, max, q, square) {
-        const url = URL.createObjectURL(file);
-        try {
-            const img = await loadImage(url);
-            return drawScaled(img, img.naturalWidth, img.naturalHeight, max, q, square);
-        } finally { URL.revokeObjectURL(url); }
-    }
+/* ---------- Gambar (Supabase Storage, bucket dibuat otomatis) ---------- */
+let bucketReady = false;
+async function ensureBucket() {
+  if (bucketReady) return;
+  try {
+    await sb('/storage/v1/bucket', {
+      method: 'POST',
+      body: JSON.stringify({ id: BUCKET, name: BUCKET, public: true }),
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (e) { /* bucket sudah ada */ }
+  bucketReady = true;
+}
+async function saveImage(dataUrl, folder) {
+  const s = String(dataUrl || '');
+  const i = s.indexOf(',');
+  const head = s.slice(0, i);
+  const mime = (/^data:(image\/(?:jpeg|png|webp));base64$/.exec(head) || [])[1];
+  if (!mime) throw fail(400, 'Format gambar tidak didukung (pakai JPG, PNG, atau WebP)');
+  const buf = Buffer.from(s.slice(i + 1), 'base64');
+  if (!buf.length) throw fail(400, 'Gambar kosong');
+  if (buf.length > 1.6 * 1024 * 1024) throw fail(413, 'Gambar terlalu besar');
+  const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
+  const path = folder + '/' + Date.now() + '-' + crypto.randomBytes(5).toString('hex') + '.' + ext;
+  await ensureBucket();
+  await sb('/storage/v1/object/' + BUCKET + '/' + path, {
+    method: 'POST', body: buf, headers: { 'Content-Type': mime, 'x-upsert': 'true' }
+  });
+  return SB_URL + '/storage/v1/object/public/' + BUCKET + '/' + path;
+}
+async function dropImage(url) {
+  const k = '/object/public/' + BUCKET + '/';
+  const i = String(url || '').indexOf(k);
+  if (i < 0) return;
+  try { await sb('/storage/v1/object/' + BUCKET + '/' + url.slice(i + k.length), { method: 'DELETE' }); } catch (e) { /* abaikan */ }
+}
 
-    /* ---------- Layar bertumpuk ---------- */
-    function pushScreen(node, onClose) {
-        node.classList.add('g-screen');
-        layer.append(node);
-        screens.push({ node, onClose });
-        requestAnimationFrame(() => requestAnimationFrame(() => node.classList.add('in')));
-        return node;
-    }
-    function popScreen() {
-        const s = screens.pop();
-        if (!s) return;
-        if (s.onClose) s.onClose();
-        s.node.remove();
-    }
-    function closeAllScreens() { while (screens.length) popScreen(); }
-    function screenHead(title, right) {
-        return el('div', 'g-sh', btn('g-ibtn', '', popScreen, 'back', 'Kembali'), txt('h3', '', title), right || el('span', 'sp'));
-    }
+/* ---------- Pembantu data ---------- */
+async function usersById(ids) {
+  ids = [...new Set(ids.filter(Boolean))];
+  if (!ids.length) return {};
+  const rows = await table('gram_users', '?id=in.(' + ids.join(',') + ')&select=' + USER_COLS);
+  const m = {};
+  rows.forEach(u => { m[u.id] = pub(u); });
+  return m;
+}
+async function enrichPosts(posts, me) {
+  if (!posts.length) return [];
+  const ids = posts.map(p => p.id).join(',');
+  const [likes, comments, users] = await Promise.all([
+    table('gram_likes', '?post_id=in.(' + ids + ')&select=post_id,user_id'),
+    table('gram_comments', '?post_id=in.(' + ids + ')&select=post_id'),
+    usersById(posts.map(p => p.user_id))
+  ]);
+  const lc = {}, mine = {}, cc = {};
+  likes.forEach(l => { lc[l.post_id] = (lc[l.post_id] || 0) + 1; if (l.user_id === me.id) mine[l.post_id] = true; });
+  comments.forEach(c => { cc[c.post_id] = (cc[c.post_id] || 0) + 1; });
+  return posts.map(p => ({
+    id: p.id, image: p.image, caption: p.caption || '', created_at: p.created_at,
+    user: users[p.user_id] || { id: p.user_id, username: 'pengguna', name: 'Pengguna', avatar: '', bio: '' },
+    likes: lc[p.id] || 0, liked: !!mine[p.id], comments: cc[p.id] || 0
+  }));
+}
+const since24 = () => enc(new Date(Date.now() - DAY).toISOString());
 
-    /* =====================================================
-       MASUK / DAFTAR
-       ===================================================== */
-    function buildAuth() {
-        authEl = el('div', 'g-auth');
-        let mode = 'login';
-        const tL = btn('on', 'Masuk'), tR = btn('', 'Daftar');
-        const seg = el('div', 'g-seg', tL, tR);
-        const user = field('text', 'Username', 'username', 20);
-        const name = field('text', 'Nama yang tampil di profil', 'name', 30);
-        const pass = field('password', 'Password', 'current-password', 100);
-        const err = el('div', 'g-err');
-        err.setAttribute('role', 'alert');
-        const go = el('button', 'g-primary');
-        go.type = 'submit';
-        const form = el('form', 'g-form', user, name, pass, err, go);
-        const hint = txt('p', 'g-note-small', 'Username: huruf kecil, angka, titik, atau garis bawah (3–20 karakter).');
-
-        function setMode(m) {
-            mode = m;
-            tL.classList.toggle('on', m === 'login');
-            tR.classList.toggle('on', m === 'register');
-            name.hidden = m === 'login';
-            hint.hidden = m === 'login';
-            pass.autocomplete = m === 'login' ? 'current-password' : 'new-password';
-            pass.placeholder = m === 'login' ? 'Password' : 'Password (min. 6 karakter)';
-            go.textContent = m === 'login' ? 'Masuk' : 'Buat akun';
-            err.textContent = '';
-        }
-        tL.addEventListener('click', () => setMode('login'));
-        tR.addEventListener('click', () => setMode('register'));
-        setMode('login');
-        authReset = () => { setMode('login'); user.value = ''; name.value = ''; pass.value = ''; };
-
-        form.addEventListener('submit', async e => {
-            e.preventDefault();
-            err.textContent = '';
-            if (!user.value.trim() || !pass.value) { err.textContent = 'Isi username dan password'; return; }
-            go.disabled = true;
-            const label = go.textContent;
-            go.textContent = 'Tunggu...';
-            try {
-                const r = await call(mode, { username: user.value.trim(), password: pass.value, name: name.value.trim() });
-                token = r.token;
-                me = r.user;
-                store.set(TOKEN_KEY, token);
-                pass.value = '';
-                enterApp();
-            } catch (ex) { err.textContent = ex.message; }
-            go.disabled = false;
-            go.textContent = label;
-        });
-
-        authEl.append(el('div', 'g-auth-card',
-            txt('div', 'g-logo big', 'OOCgram'),
-            txt('p', 'g-sub', 'Bagikan momen bareng circle OOC'),
-            seg, form, hint,
-            el('div', '', btn('g-link', 'Kembali ke website OOC', close))));
-        root.append(authEl);
+/* ---------- Aksi ---------- */
+const open = {
+  async register(b, _me, ip) {
+    if (limited('reg:' + ip, 6, 3600 * 1000)) throw fail(429, 'Terlalu banyak pendaftaran. Coba lagi nanti.');
+    const username = clean(b.username, 20).toLowerCase();
+    if (!/^[a-z0-9_.]{3,20}$/.test(username)) throw fail(400, 'Username 3–20 karakter: huruf kecil, angka, titik, atau garis bawah');
+    const password = String(b.password || '');
+    if (password.length < 6 || password.length > 100) throw fail(400, 'Password minimal 6 karakter');
+    const name = clean(b.name, 30) || username;
+    const ex = await table('gram_users', '?username=eq.' + enc(username) + '&select=id');
+    if (ex.length) throw fail(409, 'Username sudah dipakai');
+    let rows;
+    try {
+      rows = await table('gram_users', '', { method: 'POST', json: { username, name, pass_hash: hashPw(password) } });
+    } catch (e) {
+      if (/duplicate|unique/i.test(e.message)) throw fail(409, 'Username sudah dipakai');
+      throw e;
     }
+    return { token: sign(rows[0].id), user: pub(rows[0]) };
+  },
+  async login(b, _me, ip) {
+    if (limited('login:' + ip, 15, 10 * 60 * 1000)) throw fail(429, 'Terlalu banyak percobaan. Tunggu beberapa menit.');
+    const username = clean(b.username, 20).toLowerCase();
+    const rows = await table('gram_users', '?username=eq.' + enc(username) + '&select=' + USER_COLS + ',pass_hash');
+    const u = rows[0];
+    if (!u || !checkPw(String(b.password || ''), u.pass_hash)) {
+      await new Promise(r => setTimeout(r, 600));
+      throw fail(401, 'Username atau password salah');
+    }
+    return { token: sign(u.id), user: pub(u) };
+  }
+};
 
-    /* =====================================================
-       KERANGKA APLIKASI
-       ===================================================== */
-    function buildApp() {
-        appEl = el('div', 'g-app');
-        const top = el('header', 'g-top',
-            btn('g-ibtn', '', close, 'close', 'Tutup OOCgram'),
-            txt('div', 'g-logo', 'OOCgram'),
-            btn('g-ibtn', '', () => show(tab, true), 'refresh', 'Segarkan'));
-        view = el('main', 'g-view');
-        navEl = el('nav', 'g-nav');
-        [['home', 'home', 'Beranda'], ['notes', 'note', 'Catatan'], ['camera', 'plus', 'Kamera'],
-         ['chat', 'send', 'Pesan'], ['me', 'user', 'Profil']].forEach(([id, ic, label]) => {
-            const b = btn(id === 'camera' ? 'mid' : '', '', () => show(id), ic, label);
-            b.dataset.tab = id;
-            b.append(label);
-            if (id === 'chat') { badgeEl = txt('span', 'g-badge', '0'); badgeEl.hidden = true; b.append(badgeEl); }
-            navEl.append(b);
-        });
-        appEl.append(top, view, navEl);
-        root.append(appEl);
-    }
+const authed = {
+  async me(_b, me) { return { user: pub(me) }; },
 
-    function show(t, force) {
-        if (tab === 'camera' && t !== 'camera') stopCam();
-        clearInterval(timers.chats);
-        tab = t;
-        navEl.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-        view.scrollTop = 0;
-        ({ home: renderHome, notes: renderNotes, camera: renderCamera, chat: renderChat, me: renderMe })[t](force);
-    }
+  /* --- Feed --- */
+  async feed(b, me) {
+    const d = b.before ? new Date(b.before) : null;
+    const filter = d && !isNaN(d) ? '&created_at=lt.' + enc(d.toISOString()) : '';
+    const posts = await table('gram_posts', '?select=id,user_id,image,caption,created_at&order=created_at.desc&limit=15' + filter);
+    return { posts: await enrichPosts(posts, me) };
+  },
+  async post_create(b, me) {
+    if (limited('post:' + me.id, 20, 3600 * 1000)) throw fail(429, 'Terlalu banyak posting. Coba lagi nanti.');
+    const image = await saveImage(b.image, 'posts');
+    const rows = await table('gram_posts', '', { method: 'POST', json: { user_id: me.id, image, caption: clean(b.caption, 500) } });
+    return { post: (await enrichPosts(rows, me))[0] };
+  },
+  async post_delete(b, me) {
+    const id = uuid(b.id);
+    const rows = await table('gram_posts', '?id=eq.' + id + '&user_id=eq.' + me.id + '&select=id,image');
+    if (!rows.length) throw fail(404, 'Postingan tidak ditemukan');
+    await table('gram_posts', '?id=eq.' + id, { method: 'DELETE' });
+    await dropImage(rows[0].image);
+    return { ok: true };
+  },
+  async like(b, me) {
+    const id = uuid(b.id);
+    const ex = await table('gram_likes', '?post_id=eq.' + id + '&user_id=eq.' + me.id + '&select=post_id');
+    if (ex.length) await table('gram_likes', '?post_id=eq.' + id + '&user_id=eq.' + me.id, { method: 'DELETE' });
+    else await table('gram_likes', '', { method: 'POST', json: { post_id: id, user_id: me.id } });
+    const all = await table('gram_likes', '?post_id=eq.' + id + '&select=user_id');
+    return { liked: !ex.length, likes: all.length };
+  },
+  async comments(b, me) {
+    const id = uuid(b.id);
+    const rows = await table('gram_comments', '?post_id=eq.' + id + '&select=id,user_id,body,created_at&order=created_at.asc&limit=100');
+    const users = await usersById(rows.map(r => r.user_id));
+    return { comments: rows.map(r => ({ id: r.id, body: r.body, created_at: r.created_at, user: users[r.user_id] || pub({ id: r.user_id, username: 'pengguna' }) })) };
+  },
+  async comment_add(b, me) {
+    const id = uuid(b.id);
+    const body = clean(b.body, 300);
+    if (!body) throw fail(400, 'Komentar kosong');
+    if (limited('cmt:' + me.id, 30, 60 * 1000)) throw fail(429, 'Terlalu cepat. Tunggu sebentar.');
+    const rows = await table('gram_comments', '', { method: 'POST', json: { post_id: id, user_id: me.id, body } });
+    return { comment: { id: rows[0].id, body, created_at: rows[0].created_at, user: pub(me) } };
+  },
 
-    function enterApp() {
-        authEl.hidden = true;
-        appEl.hidden = false;
-        closeAllScreens();
-        feed.posts = []; storyGroups = [];
-        show('home', true);
-        pollUnread();
-        clearInterval(timers.unread);
-        timers.unread = setInterval(pollUnread, 15000);
-    }
-    function showAuth() {
-        authReset();
-        appEl.hidden = true;
-        authEl.hidden = false;
-        clearInterval(timers.unread);
-        clearInterval(timers.chats);
-        stopCam();
-        closeAllScreens();
-    }
-    function logoutLocal() {
-        token = ''; me = null;
-        store.del(TOKEN_KEY);
-        if (root && !root.hidden) showAuth();
-    }
-    async function pollUnread() {
-        if (!token) return;
-        try {
-            const r = await call('unread');
-            badgeEl.hidden = !r.unread;
-            badgeEl.textContent = r.unread > 9 ? '9+' : String(r.unread);
-        } catch (e) { /* abaikan */ }
-    }
+  /* --- Story --- */
+  async stories(_b, me) {
+    const rows = await table('gram_stories', '?created_at=gte.' + since24() + '&select=id,user_id,image,caption,created_at&order=created_at.asc&limit=300');
+    const users = await usersById(rows.map(r => r.user_id));
+    const groups = {};
+    rows.forEach(r => {
+      (groups[r.user_id] = groups[r.user_id] || { user: users[r.user_id] || pub({ id: r.user_id, username: 'pengguna' }), items: [] })
+        .items.push({ id: r.id, image: r.image, caption: r.caption || '', created_at: r.created_at });
+    });
+    const list = Object.values(groups).sort((a, b) =>
+      new Date(b.items[b.items.length - 1].created_at) - new Date(a.items[a.items.length - 1].created_at));
+    return { stories: list };
+  },
+  async story_add(b, me) {
+    if (limited('story:' + me.id, 20, 3600 * 1000)) throw fail(429, 'Terlalu banyak story. Coba lagi nanti.');
+    const image = await saveImage(b.image, 'stories');
+    const rows = await table('gram_stories', '', { method: 'POST', json: { user_id: me.id, image, caption: clean(b.caption, 120) } });
+    return { story: { id: rows[0].id, image, caption: rows[0].caption || '', created_at: rows[0].created_at } };
+  },
+  async story_delete(b, me) {
+    const id = uuid(b.id);
+    const rows = await table('gram_stories', '?id=eq.' + id + '&user_id=eq.' + me.id + '&select=id,image');
+    if (!rows.length) throw fail(404, 'Story tidak ditemukan');
+    await table('gram_stories', '?id=eq.' + id, { method: 'DELETE' });
+    await dropImage(rows[0].image);
+    return { ok: true };
+  },
 
-    /* =====================================================
-       BERANDA: STORY + FEED
-       ===================================================== */
-    async function renderHome(force) {
-        view.innerHTML = '';
-        home = { bar: el('div', 'g-stories'), list: el('div', 'g-posts') };
-        view.append(home.bar, home.list);
-        drawStories();
-        loadStories();
-        if (force || !feed.posts.length) await loadFeed(true);
-        else drawFeed();
-    }
+  /* --- Catatan (teks singkat, hilang setelah 24 jam) --- */
+  async notes(_b, me) {
+    const rows = await table('gram_notes', '?created_at=gte.' + since24() + '&select=user_id,body,created_at&order=created_at.desc&limit=100');
+    const users = await usersById(rows.map(r => r.user_id));
+    return { notes: rows.filter(r => users[r.user_id]).map(r => ({ user: users[r.user_id], body: r.body, created_at: r.created_at })) };
+  },
+  async note_set(b, me) {
+    const body = clean(b.body, 60);
+    if (!body) throw fail(400, 'Catatan kosong');
+    const row = { user_id: me.id, body, created_at: new Date().toISOString() };
+    await sb('/rest/v1/gram_notes?on_conflict=user_id', {
+      method: 'POST',
+      body: JSON.stringify(row),
+      headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=representation' }
+    });
+    return { note: { user: pub(me), body, created_at: row.created_at } };
+  },
+  async note_clear(_b, me) {
+    await table('gram_notes', '?user_id=eq.' + me.id, { method: 'DELETE' });
+    return { ok: true };
+  },
 
-    async function loadStories() {
-        try {
-            const r = await call('stories');
-            storyGroups = r.stories;
-            if (tab === 'home' && home) drawStories();
-        } catch (e) { /* abaikan */ }
-    }
+  /* --- Pengguna & profil --- */
+  async users(b, me) {
+    const q = String(b.q || '').toLowerCase().replace(/[^a-z0-9_. ]/g, '').trim().slice(0, 20);
+    const base = '&select=' + USER_COLS + '&limit=30&id=neq.' + me.id;
+    const rows = q
+      ? await table('gram_users', '?or=' + enc('(username.ilike.*' + q + '*,name.ilike.*' + q + '*)') + base)
+      : await table('gram_users', '?order=created_at.desc' + base);
+    return { users: rows.map(pub) };
+  },
+  async profile(b, me) {
+    const username = clean(b.username, 20).toLowerCase();
+    const rows = await table('gram_users', '?username=eq.' + enc(username) + '&select=' + USER_COLS);
+    if (!rows.length) throw fail(404, 'Pengguna tidak ditemukan');
+    const u = rows[0];
+    const posts = await table('gram_posts', '?user_id=eq.' + u.id + '&select=id,image,caption,created_at&order=created_at.desc&limit=60');
+    return { user: pub(u), posts, isMe: u.id === me.id };
+  },
+  async profile_update(b, me) {
+    const patch = { name: clean(b.name, 30) || me.username, bio: clean(b.bio, 150) };
+    if (b.avatar) patch.avatar = await saveImage(b.avatar, 'avatars');
+    const rows = await table('gram_users', '?id=eq.' + me.id, { method: 'PATCH', json: patch });
+    return { user: pub(rows[0]) };
+  },
 
-    function isNew(g) { return g.items.some(i => !seen.has(i.id)); }
-    function orderedGroups() {
-        const mine = storyGroups.find(g => g.user.id === me.id);
-        const others = storyGroups.filter(g => g.user.id !== me.id).sort((a, b) => isNew(b) - isNew(a));
-        return (mine ? [mine] : []).concat(others);
+  /* --- Chat pribadi --- */
+  async chats(_b, me) {
+    const rows = await table('gram_messages',
+      '?or=' + enc('(from_id.eq.' + me.id + ',to_id.eq.' + me.id + ')') +
+      '&select=id,from_id,to_id,body,is_read,created_at&order=id.desc&limit=400');
+    const convo = {};
+    rows.forEach(m => {
+      const other = m.from_id === me.id ? m.to_id : m.from_id;
+      const c = convo[other] = convo[other] || { other, last: m, unread: 0 };
+      if (m.to_id === me.id && !m.is_read) c.unread++;
+    });
+    const users = await usersById(Object.keys(convo));
+    const list = Object.values(convo).filter(c => users[c.other]).map(c => ({
+      user: users[c.other],
+      last: { id: c.last.id, body: c.last.body, mine: c.last.from_id === me.id, created_at: c.last.created_at },
+      unread: c.unread
+    }));
+    return { chats: list };
+  },
+  async messages(b, me) {
+    const other = uuid(b.with);
+    const after = Math.max(0, parseInt(b.after, 10) || 0);
+    const pair = enc('(and(from_id.eq.' + me.id + ',to_id.eq.' + other + '),and(from_id.eq.' + other + ',to_id.eq.' + me.id + '))');
+    const sel = '&select=id,from_id,to_id,body,is_read,created_at';
+    let rows;
+    if (after > 0) rows = await table('gram_messages', '?or=' + pair + '&id=gt.' + after + sel + '&order=id.asc&limit=200');
+    else rows = (await table('gram_messages', '?or=' + pair + sel + '&order=id.desc&limit=80')).reverse();
+    if (rows.some(m => m.to_id === me.id && !m.is_read)) {
+      try { await table('gram_messages', '?to_id=eq.' + me.id + '&from_id=eq.' + other + '&is_read=eq.false', { method: 'PATCH', json: { is_read: true } }); } catch (e) { /* abaikan */ }
     }
-    function storyBubble(user, label, ringClass, plus, onOpen, onPlus) {
-        const b = el('div', 'g-story');
-        const open = el('button', '');
-        open.type = 'button';
-        open.setAttribute('aria-label', 'Lihat story ' + label);
-        open.append(el('span', 'ring ' + ringClass, el('span', 'inner', avatar(user, 56))), txt('span', 'nm', label));
-        open.addEventListener('click', onOpen);
-        b.append(open);
-        if (plus) {
-            const p = btn('plus', '', onPlus, 'plus', 'Tambah story');
-            p.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 6v12M6 12h12"/></svg>';
-            b.append(p);
-        }
-        return b;
+    return { messages: rows.map(m => ({ id: m.id, body: m.body, mine: m.from_id === me.id, created_at: m.created_at })) };
+  },
+  async message_send(b, me) {
+    const to = uuid(b.to);
+    const body = clean(b.body, 1000);
+    if (!body) throw fail(400, 'Pesan kosong');
+    if (to === me.id) throw fail(400, 'Tidak bisa mengirim pesan ke diri sendiri');
+    if (limited('msg:' + me.id, 40, 60 * 1000)) throw fail(429, 'Terlalu cepat. Tunggu sebentar.');
+    const ex = await table('gram_users', '?id=eq.' + to + '&select=id');
+    if (!ex.length) throw fail(404, 'Pengguna tidak ditemukan');
+    const rows = await table('gram_messages', '', { method: 'POST', json: { from_id: me.id, to_id: to, body } });
+    return { message: { id: rows[0].id, body, mine: true, created_at: rows[0].created_at } };
+  },
+  async unread(_b, me) {
+    const rows = await table('gram_messages', '?to_id=eq.' + me.id + '&is_read=eq.false&select=id&limit=100');
+    return { unread: rows.length };
+  }
+};
+
+module.exports = handler(async (req, res) => {
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+  try {
+    const b = req.body || {};
+    const action = String(b.action || '');
+    const ip = String(req.headers['x-forwarded-for'] || (req.socket && req.socket.remoteAddress) || 'x').split(',')[0].trim();
+
+    if (open[action]) return res.status(200).json(await open[action](b, null, ip));
+    if (!authed[action]) return res.status(400).json({ error: 'Aksi tidak dikenal' });
+
+    const t = verify(req.headers['x-gram-token']);
+    const rows = t ? await table('gram_users', '?id=eq.' + t.u + '&select=' + USER_COLS) : [];
+    if (!rows.length) return res.status(401).json({ error: 'Sesi berakhir. Silakan masuk lagi.' });
+
+    res.status(200).json(await authed[action](b, rows[0], ip));
+  } catch (e) {
+    if (e && e.status) return res.status(e.status).json({ error: e.message });
+    if (/gram_\w+/.test(String(e && e.message)) && /(relation|table|schema cache|does not exist|Could not find)/i.test(e.message)) {
+      return res.status(500).json({ error: 'Tabel OOCgram belum dibuat di Supabase. Jalankan oocgram.sql di SQL Editor.' });
     }
-    function drawStories() {
-        if (!home) return;
-        const bar = home.bar;
-        bar.innerHTML = '';
-        const groups = orderedGroups();
-        const mine = groups.find(g => g.user.id === me.id);
-        bar.append(storyBubble(me, 'Cerita kamu', mine ? (isNew(mine) ? 'new' : '') : 'none', true,
-            () => { if (mine) openStories(groups, 0); else openStoryCamera(); }, openStoryCamera));
-        groups.forEach((g, idx) => {
-            if (g.user.id === me.id) return;
-            bar.append(storyBubble(g.user, g.user.username, isNew(g) ? 'new' : '', false, () => openStories(groups, idx)));
-        });
-    }
-    function openStoryCamera() { cam.preferStory = true; show('camera'); }
-
-    function openStories(groups, start) {
-        let g = start, i = 0;
-        const sv = el('div', 'g-sv');
-        const bars = el('div', 'g-sv-bars');
-        const head = el('div', 'g-sv-head');
-        const img = new Image();
-        img.className = 'g-sv-img';
-        img.alt = 'Story';
-        const cap = el('div', 'g-sv-cap');
-        const left = el('button', 'g-sv-l'), right = el('button', 'g-sv-r');
-        left.type = right.type = 'button';
-        left.setAttribute('aria-label', 'Sebelumnya');
-        right.setAttribute('aria-label', 'Berikutnya');
-        sv.append(img, bars, head, cap, left, right);
-
-        function save() {
-            store.set(SEEN_KEY, JSON.stringify([...seen].slice(-400)));
-        }
-        function exit() { popScreen(); }
-        function next() {
-            if (i < groups[g].items.length - 1) { i++; paint(); }
-            else if (g < groups.length - 1) { g++; i = 0; paint(); }
-            else exit();
-        }
-        function prev() {
-            if (i > 0) { i--; paint(); }
-            else if (g > 0) { g--; i = 0; paint(); }
-            else paint();
-        }
-        function paint() {
-            const grp = groups[g], it = grp.items[i];
-            seen.add(it.id);
-            save();
-            bars.innerHTML = '';
-            grp.items.forEach((_, k) => {
-                const b = el('i'), f = el('u');
-                if (k < i) b.classList.add('done');
-                if (k === i) { f.classList.add('run'); f.addEventListener('animationend', next, { once: true }); }
-                b.append(f);
-                bars.append(b);
-            });
-            img.src = it.image;
-            cap.textContent = it.caption || '';
-            cap.hidden = !it.caption;
-            head.innerHTML = '';
-            head.append(avatar(grp.user, 34), txt('b', '', grp.user.username), txt('small', '', ago(it.created_at)), el('span', 'sp'));
-            if (grp.user.id === me.id) {
-                head.append(btn('g-ibtn', '', async () => {
-                    sv.classList.add('hold');
-                    const yes = await confirmBox('Hapus story ini?', 'Hapus');
-                    sv.classList.remove('hold');
-                    if (!yes) return;
-                    try {
-                        await call('story_delete', { id: it.id });
-                        grp.items.splice(i, 1);
-                        if (!grp.items.length) {
-                            storyGroups = storyGroups.filter(x => x !== grp);
-                            groups.splice(g, 1);
-                            if (!groups.length) { exit(); return; }
-                            if (g >= groups.length) g = groups.length - 1;
-                            i = 0;
-                        } else if (i >= grp.items.length) i = grp.items.length - 1;
-                        paint();
-                    } catch (e) { gtoast(e.message); }
-                }, 'trash', 'Hapus story'));
-            }
-            head.append(btn('g-ibtn', '', exit, 'close', 'Tutup'));
-        }
-        left.addEventListener('click', prev);
-        right.addEventListener('click', next);
-        ['pointerdown'].forEach(ev => sv.addEventListener(ev, () => sv.classList.add('hold')));
-        ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => sv.addEventListener(ev, () => sv.classList.remove('hold')));
-        pushScreen(sv, () => { drawStories(); });
-        sv.style.transform = 'none';
-        paint();
-    }
-
-    async function loadFeed(reset) {
-        if (feed.loading) return;
-        feed.loading = true;
-        if (reset) {
-            feed.posts = [];
-            home.list.innerHTML = '';
-            home.list.append(el('div', 'g-spin'));
-        }
-        try {
-            const before = feed.posts.length ? feed.posts[feed.posts.length - 1].created_at : '';
-            const r = await call('feed', before ? { before } : {});
-            feed.posts = feed.posts.concat(r.posts);
-            feed.more = r.posts.length >= 15;
-        } catch (e) {
-            if (tab === 'home' && home) { home.list.innerHTML = ''; home.list.append(txt('div', 'g-empty', e.message)); }
-            feed.loading = false;
-            return;
-        }
-        feed.loading = false;
-        if (tab === 'home' && home) drawFeed();
-    }
-    function drawFeed() {
-        const list = home.list;
-        list.innerHTML = '';
-        if (!feed.posts.length) {
-            list.append(el('div', 'g-empty', txt('span', 'big', '📷'),
-                'Belum ada postingan. Ketuk tombol Kamera untuk memposting yang pertama!'));
-            return;
-        }
-        feed.posts.forEach(p => list.append(postCard(p)));
-        if (feed.more) list.append(btn('g-secondary g-more', 'Muat lebih banyak', async e => {
-            e.currentTarget.disabled = true;
-            await loadFeed(false);
-        }));
-    }
-
-    function postCard(p) {
-        const card = el('article', 'g-post');
-        const who = el('button', 'g-who');
-        who.type = 'button';
-        who.append(avatar(p.user, 32), txt('b', '', p.user.username));
-        who.addEventListener('click', () => openProfile(p.user.username));
-        const head = el('div', 'g-phead', who);
-        if (p.user.id === me.id) {
-            head.append(btn('g-ibtn', '', async () => {
-                if (!(await confirmBox('Hapus postingan ini?', 'Hapus'))) return;
-                try {
-                    await call('post_delete', { id: p.id });
-                    feed.posts = feed.posts.filter(x => x.id !== p.id);
-                    if (tab === 'home' && home) drawFeed();
-                    gtoast('Postingan dihapus');
-                } catch (e) { gtoast(e.message); }
-            }, 'trash', 'Hapus postingan'));
-        }
-
-        const img = new Image();
-        img.src = p.image;
-        img.alt = p.caption || 'Foto dari ' + p.user.username;
-        img.className = 'g-pimg';
-        img.loading = 'lazy';
-        const heart = el('span', 'g-bigheart');
-        heart.append(icon('heartFill'));
-        const wrap = el('div', 'g-pimgwrap', img, heart);
-
-        const likeB = el('button', 'g-ibtn like');
-        likeB.type = 'button';
-        likeB.setAttribute('aria-label', 'Suka');
-        const likes = el('div', 'g-likes');
-        const cmtLink = el('button', 'g-cmt-link');
-        cmtLink.type = 'button';
-
-        function paint() {
-            likeB.className = 'g-ibtn like' + (p.liked ? ' on' : '');
-            likeB.innerHTML = '';
-            likeB.append(icon(p.liked ? 'heartFill' : 'heart'));
-            likes.textContent = p.likes ? p.likes + ' suka' : 'Jadilah yang pertama menyukai ini';
-            cmtLink.textContent = p.comments ? 'Lihat ' + p.comments + ' komentar' : 'Tambah komentar...';
-        }
-        async function like() {
-            const was = p.liked, n = p.likes;
-            p.liked = !p.liked;
-            p.likes += p.liked ? 1 : -1;
-            paint();
-            try {
-                const r = await call('like', { id: p.id });
-                p.liked = r.liked; p.likes = r.likes;
-            } catch (e) { p.liked = was; p.likes = n; gtoast(e.message); }
-            paint();
-        }
-        likeB.addEventListener('click', like);
-        let last = 0;
-        wrap.addEventListener('click', () => {
-            const now = Date.now();
-            if (now - last < 320) {
-                heart.classList.remove('pop');
-                void heart.offsetWidth;
-                heart.classList.add('pop');
-                if (!p.liked) like();
-            }
-            last = now;
-        });
-        const openCmt = () => openComments(p, paint);
-        cmtLink.addEventListener('click', openCmt);
-        const acts = el('div', 'g-pacts', likeB, btn('g-ibtn', '', openCmt, 'comment', 'Komentar'));
-
-        card.append(head, wrap, acts, likes);
-        if (p.caption) card.append(el('div', 'g-cap', txt('b', '', p.user.username + ' '), p.caption));
-        card.append(cmtLink, txt('div', 'g-ptime', ago(p.created_at)));
-        paint();
-        return card;
-    }
-
-    function openComments(p, onChange) {
-        const list = el('div', 'g-sbody', el('div', 'g-spin'));
-        const input = el('input', 'g-in');
-        input.type = 'text'; input.placeholder = 'Tambahkan komentar...'; input.maxLength = 300;
-        const post = btn('g-link', 'Kirim');
-        post.disabled = true;
-        input.addEventListener('input', () => { post.disabled = !input.value.trim(); });
-        const scr = el('div', '', screenHead('Komentar'), list, el('div', 'g-compose', avatar(me, 32), input, post));
-        pushScreen(scr);
-
-        function row(c) {
-            return el('div', 'g-comment', avatar(c.user, 32),
-                el('div', 't', txt('b', '', c.user.username + ' '), c.body, txt('small', '', ago(c.created_at))));
-        }
-        call('comments', { id: p.id }).then(r => {
-            list.innerHTML = '';
-            if (p.caption) list.append(el('div', 'g-comment', avatar(p.user, 32),
-                el('div', 't', txt('b', '', p.user.username + ' '), p.caption, txt('small', '', ago(p.created_at)))));
-            r.comments.forEach(c => list.append(row(c)));
-            if (!r.comments.length && !p.caption) list.append(txt('div', 'g-empty', 'Belum ada komentar.'));
-        }).catch(e => { list.innerHTML = ''; list.append(txt('div', 'g-empty', e.message)); });
-
-        async function send() {
-            const body = input.value.trim();
-            if (!body) return;
-            post.disabled = true;
-            try {
-                const r = await call('comment_add', { id: p.id, body });
-                const empty = list.querySelector('.g-empty');
-                if (empty) empty.remove();
-                list.append(row(r.comment));
-                list.scrollTop = list.scrollHeight;
-                input.value = '';
-                p.comments++;
-                onChange();
-            } catch (e) { gtoast(e.message); post.disabled = false; }
-        }
-        post.addEventListener('click', send);
-        input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
-    }
-
-    /* =====================================================
-       KAMERA
-       ===================================================== */
-    function stopCam() {
-        if (cam.stream) { cam.stream.getTracks().forEach(t => t.stop()); cam.stream = null; }
-    }
-    function camFail(message) {
-        const ui = cam.ui;
-        if (!ui) return;
-        ui.msg.innerHTML = '';
-        ui.msg.append(txt('p', '', message), btn('g-primary', 'Pilih dari galeri', () => ui.file.click()));
-        ui.msg.hidden = false;
-    }
-    async function startCam() {
-        stopCam();
-        const ui = cam.ui;
-        if (!ui) return;
-        ui.msg.hidden = true;
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            camFail('Kamera tidak didukung di browser ini. Kamu tetap bisa memilih foto dari galeri.');
-            return;
-        }
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: cam.facing, width: { ideal: 1280 }, height: { ideal: 1280 } }, audio: false
-            });
-            if (tab !== 'camera' || cam.ui !== ui) { stream.getTracks().forEach(t => t.stop()); return; }
-            cam.stream = stream;
-            ui.vid.srcObject = stream;
-            ui.vid.classList.toggle('mirror', cam.facing === 'user');
-            ui.vid.play().catch(() => { /* abaikan */ });
-        } catch (e) {
-            camFail('Kamera tidak bisa dibuka. Izinkan akses kamera di browser, atau pilih foto dari galeri.');
-        }
-    }
-    function renderCamera() {
-        view.innerHTML = '';
-        const vid = document.createElement('video');
-        vid.autoplay = true; vid.muted = true; vid.playsInline = true;
-        vid.setAttribute('playsinline', '');
-        const msg = el('div', 'g-cam-msg');
-        msg.hidden = true;
-        const file = el('input');
-        file.type = 'file'; file.accept = 'image/*'; file.hidden = true;
-        const flip = btn('g-cam-flip', '', () => { cam.facing = cam.facing === 'user' ? 'environment' : 'user'; startCam(); }, 'flip', 'Ganti kamera');
-        const shutter = el('button', 'g-shutter');
-        shutter.type = 'button';
-        shutter.setAttribute('aria-label', 'Ambil foto');
-        const gal = btn('g-cam-gal', 'Galeri', () => file.click(), 'image');
-        const bar = el('div', 'g-cam-bar', gal, shutter, el('span'));
-        view.append(el('div', 'g-cam', vid, msg, flip, bar, file));
-        cam.ui = { vid, msg, file };
-
-        shutter.addEventListener('click', () => {
-            if (!vid.videoWidth) { gtoast('Kamera belum siap'); return; }
-            openEditor(drawScaled(vid, vid.videoWidth, vid.videoHeight, 1080, 0.85, false));
-        });
-        file.addEventListener('change', async () => {
-            const f = file.files[0];
-            file.value = '';
-            if (!f) return;
-            try { openEditor(await fileToJpeg(f, 1080, 0.85, false)); }
-            catch (e) { gtoast(e.message); }
-        });
-        startCam();
-    }
-
-    function openEditor(dataUrl) {
-        stopCam();
-        let mode = cam.preferStory ? 'story' : 'post';
-        cam.preferStory = false;
-        const img = new Image();
-        img.src = dataUrl; img.alt = 'Pratinjau'; img.className = 'g-edit-img';
-        const pBtn = btn('on', 'Postingan'), sBtn = btn('', 'Story');
-        const cap = el('textarea', 'g-ta');
-        cap.placeholder = 'Tulis keterangan...';
-        const share = btn('g-link', 'Bagikan');
-        function setMode(m) {
-            mode = m;
-            pBtn.classList.toggle('on', m === 'post');
-            sBtn.classList.toggle('on', m === 'story');
-            cap.maxLength = m === 'post' ? 500 : 120;
-            cap.placeholder = m === 'post' ? 'Tulis keterangan...' : 'Tulis teks untuk story (opsional)';
-        }
-        pBtn.addEventListener('click', () => setMode('post'));
-        sBtn.addEventListener('click', () => setMode('story'));
-        setMode(mode);
-        const head = screenHead('Baru', share);
-        const scr = el('div', '', head, el('div', 'g-sbody', img, el('div', 'g-edit-body', el('div', 'g-seg', pBtn, sBtn), cap)));
-        pushScreen(scr, () => { if (tab === 'camera') startCam(); });
-
-        share.addEventListener('click', async () => {
-            share.disabled = true;
-            share.textContent = 'Mengirim...';
-            try {
-                if (mode === 'post') {
-                    const r = await call('post_create', { image: dataUrl, caption: cap.value.trim() });
-                    feed.posts.unshift(r.post);
-                } else {
-                    await call('story_add', { image: dataUrl, caption: cap.value.trim() });
-                    storyGroups = [];
-                }
-                screens.splice(screens.findIndex(s => s.node === scr), 1);
-                scr.remove();
-                closeAllScreens();
-                gtoast(mode === 'post' ? 'Postingan dibagikan ✨' : 'Story dibagikan ✨');
-                show('home', mode === 'story');
-            } catch (e) {
-                gtoast(e.message);
-                share.disabled = false;
-                share.textContent = 'Bagikan';
-            }
-        });
-    }
-
-    /* =====================================================
-       CATATAN
-       ===================================================== */
-    async function renderNotes() {
-        view.innerHTML = '';
-        const box = el('div', 'g-pad');
-        view.append(box);
-        box.append(txt('h2', 'g-h', 'Catatan'),
-            txt('p', 'g-mute', 'Tulis kabar singkat (maks. 60 huruf). Teman bisa melihatnya selama 24 jam.'));
-
-        const input = el('input', 'g-in');
-        input.type = 'text'; input.maxLength = 60; input.placeholder = 'Lagi mikirin apa?';
-        const count = txt('div', 'g-count', '0/60');
-        input.addEventListener('input', () => { count.textContent = input.value.length + '/60'; });
-        const shareB = btn('g-primary', 'Bagikan');
-        const delB = btn('g-secondary g-danger', 'Hapus');
-        delB.hidden = true;
-        const mine = el('div', 'g-mynote', el('div', '', avatar(me, 44)), el('div', 'row', input, shareB), count, delB);
-        const grid = el('div', 'g-notes-grid');
-        box.append(mine, txt('h3', 'g-h', 'Catatan teman'), grid);
-        grid.append(el('div', 'g-spin'));
-
-        async function load() {
-            try {
-                const r = await call('notes');
-                grid.innerHTML = '';
-                const my = r.notes.find(n => n.user.id === me.id);
-                delB.hidden = !my;
-                if (my && !input.value) { input.value = my.body; count.textContent = my.body.length + '/60'; }
-                const others = r.notes.filter(n => n.user.id !== me.id);
-                if (!others.length) {
-                    grid.style.display = 'block';
-                    grid.append(txt('div', 'g-empty', 'Belum ada catatan dari teman.'));
-                    return;
-                }
-                grid.style.display = '';
-                others.forEach(n => {
-                    const b = el('button', 'g-nitem');
-                    b.type = 'button';
-                    b.append(txt('span', 'bubble', n.body), avatar(n.user, 60), txt('span', 'nm', n.user.name), txt('small', '', ago(n.created_at)));
-                    b.addEventListener('click', () => openChat(n.user));
-                    grid.append(b);
-                });
-            } catch (e) { grid.innerHTML = ''; grid.style.display = 'block'; grid.append(txt('div', 'g-empty', e.message)); }
-        }
-        shareB.addEventListener('click', async () => {
-            const body = input.value.trim();
-            if (!body) { gtoast('Tulis catatan dulu'); return; }
-            shareB.disabled = true;
-            try { await call('note_set', { body }); gtoast('Catatan dibagikan ✨'); await load(); }
-            catch (e) { gtoast(e.message); }
-            shareB.disabled = false;
-        });
-        delB.addEventListener('click', async () => {
-            try { await call('note_clear'); input.value = ''; count.textContent = '0/60'; gtoast('Catatan dihapus'); await load(); }
-            catch (e) { gtoast(e.message); }
-        });
-        load();
-    }
-
-    /* =====================================================
-       PESAN PRIBADI
-       ===================================================== */
-    function renderChat() {
-        view.innerHTML = '';
-        const list = el('div', 'g-chats');
-        view.append(el('div', 'g-chat-top', txt('b', '', 'Pesan'), btn('g-newbtn', 'Pesan baru', openUserSearch, 'edit')), list);
-        list.append(el('div', 'g-spin'));
-        async function load() {
-            try {
-                const r = await call('chats');
-                list.innerHTML = '';
-                if (!r.chats.length) {
-                    list.append(el('div', 'g-empty', txt('span', 'big', '💬'), 'Belum ada pesan. Ketuk “Pesan baru” untuk mulai ngobrol.'));
-                    return;
-                }
-                r.chats.forEach(c => {
-                    const row = el('button', 'g-crow' + (c.unread ? ' unread' : ''));
-                    row.type = 'button';
-                    row.append(avatar(c.user, 52),
-                        el('div', 't', txt('b', '', c.user.name), txt('span', '', (c.last.mine ? 'Kamu: ' : '') + c.last.body + ' · ' + ago(c.last.created_at))));
-                    if (c.unread) row.append(el('span', 'dot'));
-                    row.addEventListener('click', () => openChat(c.user));
-                    list.append(row);
-                });
-            } catch (e) { if (!list.querySelector('.g-crow')) { list.innerHTML = ''; list.append(txt('div', 'g-empty', e.message)); } }
-        }
-        load();
-        timers.chats = setInterval(() => { if (tab === 'chat' && !screens.length) load(); }, 8000);
-    }
-
-    function openUserSearch() {
-        const q = el('input', 'g-in');
-        q.type = 'search'; q.placeholder = 'Cari nama atau username...'; q.maxLength = 20;
-        const list = el('div', 'g-sbody');
-        const scr = el('div', '', screenHead('Pesan baru'), el('div', 'g-pad', q), list);
-        pushScreen(scr);
-        let t;
-        async function load() {
-            list.innerHTML = '';
-            list.append(el('div', 'g-spin'));
-            try {
-                const r = await call('users', { q: q.value });
-                list.innerHTML = '';
-                if (!r.users.length) { list.append(txt('div', 'g-empty', 'Tidak ada pengguna yang cocok.')); return; }
-                r.users.forEach(u => {
-                    const row = el('button', 'g-crow');
-                    row.type = 'button';
-                    row.append(avatar(u, 46), el('div', 't', txt('b', '', u.name), txt('span', '', '@' + u.username)));
-                    row.addEventListener('click', () => { popScreen(); openChat(u); });
-                    list.append(row);
-                });
-            } catch (e) { list.innerHTML = ''; list.append(txt('div', 'g-empty', e.message)); }
-        }
-        q.addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 300); });
-        load();
-    }
-
-    function openChat(user) {
-        const thread = el('div', 'g-thread');
-        const input = el('input', 'g-in');
-        input.type = 'text'; input.placeholder = 'Tulis pesan...'; input.maxLength = 1000;
-        const send = btn('g-link', 'Kirim');
-        send.disabled = true;
-        input.addEventListener('input', () => { send.disabled = !input.value.trim(); });
-        const who = el('button', 'g-chead');
-        who.type = 'button';
-        who.append(avatar(user, 32), txt('b', '', user.name));
-        who.addEventListener('click', () => openProfile(user.username));
-        const head = el('div', 'g-sh', btn('g-ibtn', '', popScreen, 'back', 'Kembali'), who);
-        const scr = el('div', '', head, thread, el('div', 'g-compose', input, send));
-        let lastId = 0, poll = null, lastTime = 0;
-        const have = new Set();
-        pushScreen(scr, () => { clearInterval(poll); pollUnread(); if (tab === 'chat') renderChat(); });
-
-        function add(m) {
-            if (have.has(m.id)) return;
-            have.add(m.id);
-            const t = new Date(m.created_at).getTime();
-            if (t - lastTime > 15 * 60 * 1000) {
-                thread.append(txt('div', 'g-mtime', new Date(t).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })));
-            }
-            lastTime = t;
-            thread.append(txt('div', 'g-msg' + (m.mine ? ' me' : ''), m.body));
-            if (m.id > lastId) lastId = m.id;
-        }
-        const nearBottom = () => thread.scrollHeight - thread.scrollTop - thread.clientHeight < 120;
-        async function load(first) {
-            try {
-                const r = await call('messages', first ? { with: user.id } : { with: user.id, after: lastId });
-                const stick = first || nearBottom();
-                r.messages.forEach(add);
-                if (first && !r.messages.length) thread.append(txt('div', 'g-empty', 'Mulai percakapan dengan ' + user.name + '. Kirim pesan pertama!'));
-                if (r.messages.length) { const e = thread.querySelector('.g-empty'); if (e) e.remove(); }
-                if (stick && r.messages.length) thread.scrollTop = thread.scrollHeight;
-            } catch (e) { if (first) thread.append(txt('div', 'g-empty', e.message)); }
-        }
-        load(true);
-        poll = setInterval(() => load(false), 3000);
-
-        async function doSend() {
-            const body = input.value.trim();
-            if (!body) return;
-            send.disabled = true;
-            try {
-                const r = await call('message_send', { to: user.id, body });
-                const e = thread.querySelector('.g-empty'); if (e) e.remove();
-                add(r.message);
-                input.value = '';
-                thread.scrollTop = thread.scrollHeight;
-            } catch (e) { gtoast(e.message); send.disabled = false; }
-        }
-        send.addEventListener('click', doSend);
-        input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doSend(); } });
-    }
-
-    /* =====================================================
-       PROFIL
-       ===================================================== */
-    async function renderMe() {
-        view.innerHTML = '';
-        view.append(el('div', 'g-spin'));
-        try {
-            const r = await call('profile', { username: me.username });
-            view.innerHTML = '';
-            view.append(profileView(r));
-        } catch (e) { view.innerHTML = ''; view.append(txt('div', 'g-empty', e.message)); }
-    }
-    async function openProfile(username) {
-        if (username === me.username && !screens.length) { show('me'); return; }
-        const body = el('div', 'g-sbody', el('div', 'g-spin'));
-        pushScreen(el('div', '', screenHead('@' + username), body));
-        try {
-            const r = await call('profile', { username });
-            body.innerHTML = '';
-            body.append(profileView(r));
-        } catch (e) { body.innerHTML = ''; body.append(txt('div', 'g-empty', e.message)); }
-    }
-    function profileView(d) {
-        const u = d.user;
-        const wrap = el('div', '');
-        const prof = el('div', 'g-prof',
-            el('div', 'g-prof-top', avatar(u, 84), el('div', 'g-stat', txt('b', '', String(d.posts.length)), txt('span', '', 'postingan'))),
-            txt('div', 'nm', u.name),
-            txt('div', 'g-mute', '@' + u.username));
-        if (u.bio) prof.append(txt('div', 'bio', u.bio));
-        const acts = el('div', 'g-prof-act');
-        if (d.isMe) {
-            acts.append(btn('g-secondary', 'Edit profil', openEditProfile), btn('g-secondary g-danger', 'Keluar', async () => {
-                if (await confirmBox('Keluar dari OOCgram?', 'Keluar')) { logoutLocal(); }
-            }));
-        } else {
-            acts.append(btn('g-primary', 'Kirim pesan', () => openChat(u)));
-        }
-        prof.append(acts);
-        const grid = el('div', 'g-grid');
-        d.posts.forEach(p => {
-            const b = el('button', '');
-            b.type = 'button';
-            const i = new Image();
-            i.src = p.image; i.alt = p.caption || 'Postingan'; i.loading = 'lazy';
-            b.append(i);
-            b.addEventListener('click', () => openPostViewer(p, u));
-            grid.append(b);
-        });
-        wrap.append(prof, grid);
-        if (!d.posts.length) wrap.append(txt('div', 'g-empty', d.isMe ? 'Kamu belum memposting apa pun.' : 'Belum ada postingan.'));
-        return wrap;
-    }
-    function openPostViewer(p, user) {
-        const img = new Image();
-        img.src = p.image; img.alt = p.caption || 'Postingan'; img.className = 'g-pimg';
-        const body = el('div', 'g-sbody', img);
-        if (p.caption) body.append(el('div', 'g-cap', txt('b', '', user.username + ' '), p.caption));
-        body.append(txt('div', 'g-ptime', ago(p.created_at)));
-        let right = null;
-        if (user.id === me.id) {
-            right = btn('g-ibtn', '', async () => {
-                if (!(await confirmBox('Hapus postingan ini?', 'Hapus'))) return;
-                try {
-                    await call('post_delete', { id: p.id });
-                    feed.posts = feed.posts.filter(x => x.id !== p.id);
-                    popScreen();
-                    if (tab === 'me') renderMe();
-                    gtoast('Postingan dihapus');
-                } catch (e) { gtoast(e.message); }
-            }, 'trash', 'Hapus postingan');
-        }
-        pushScreen(el('div', '', screenHead(user.username, right), body));
-    }
-    function openEditProfile() {
-        const name = field('text', 'Nama', 'name', 30);
-        name.value = me.name;
-        const bio = el('textarea', 'g-ta');
-        bio.placeholder = 'Bio singkat'; bio.maxLength = 150; bio.value = me.bio || '';
-        let newAvatar = '';
-        const prev = el('div', '', avatar(me, 72));
-        const file = el('input');
-        file.type = 'file'; file.accept = 'image/*'; file.hidden = true;
-        file.addEventListener('change', async () => {
-            const f = file.files[0];
-            file.value = '';
-            if (!f) return;
-            try {
-                newAvatar = await fileToJpeg(f, 320, 0.85, true);
-                prev.innerHTML = '';
-                prev.append(avatar({ avatar: newAvatar, username: me.username }, 72));
-            } catch (e) { gtoast(e.message); }
-        });
-        const save = btn('g-link', 'Simpan');
-        const scr = el('div', '', screenHead('Edit profil', save),
-            el('div', 'g-sbody', el('div', 'g-pad',
-                el('div', 'g-avedit', prev, btn('g-link', 'Ganti foto profil', () => file.click()), file),
-                el('div', 'g-form', name, bio))));
-        pushScreen(scr);
-        save.addEventListener('click', async () => {
-            save.disabled = true;
-            try {
-                const r = await call('profile_update', { name: name.value.trim(), bio: bio.value.trim(), avatar: newAvatar || undefined });
-                me = r.user;
-                feed.posts = [];
-                popScreen();
-                gtoast('Profil diperbarui');
-                if (tab === 'me') renderMe();
-            } catch (e) { gtoast(e.message); save.disabled = false; }
-        });
-    }
-
-    /* =====================================================
-       BUKA / TUTUP
-       ===================================================== */
-    function ensureCss() {
-        if (cssDone) return cssDone;
-        cssDone = new Promise(resolve => {
-            cssLink = document.createElement('link');
-            cssLink.rel = 'stylesheet';
-            cssLink.href = 'gram.css';
-            cssLink.onload = resolve;
-            cssLink.onerror = resolve;
-            document.head.appendChild(cssLink);
-            setTimeout(resolve, 2500);
-        });
-        return cssDone;
-    }
-    function build() {
-        if (root) return;
-        root = el('div', 'g-root');
-        root.hidden = true;
-        root.setAttribute('role', 'dialog');
-        root.setAttribute('aria-label', 'OOCgram');
-        layer = el('div', 'g-layer');
-        toastEl = el('div', 'g-toast');
-        toastEl.setAttribute('role', 'status');
-        buildAuth();
-        buildApp();
-        root.append(layer, toastEl);
-        document.body.appendChild(root);
-        document.addEventListener('keydown', e => {
-            if (e.key !== 'Escape' || root.hidden) return;
-            if (screens.length) popScreen(); else close();
-        });
-    }
-    async function open() {
-        await ensureCss();
-        build();
-        root.hidden = false;
-        document.documentElement.classList.add('gram-open');
-        if (token && !me) {
-            try { const r = await call('me'); me = r.user; } catch (e) { token = ''; store.del(TOKEN_KEY); }
-        }
-        if (token && me) enterApp(); else showAuth();
-    }
-    function close() {
-        if (!root) return;
-        root.hidden = true;
-        document.documentElement.classList.remove('gram-open');
-        clearInterval(timers.unread);
-        clearInterval(timers.chats);
-        stopCam();
-        closeAllScreens();
-    }
-
-    function mount(box) {
-        if (box.__gram) return;
-        box.__gram = true;
-        ensureCss();
-        box.append(el('div', 'g-launch',
-            txt('div', 'g-logo', 'OOCgram'),
-            txt('p', '', 'Media sosial mini untuk circle OOC'),
-            el('ul', '', txt('li', '', '📷 Posting foto & story dari kamera'),
-                txt('li', '', '📝 Catatan singkat 24 jam'),
-                txt('li', '', '💬 Chat pribadi antar anggota')),
-            btn('g-primary', 'BUKA OOCGRAM', open)));
-        const tabBtn = document.querySelector('.tool-tabs [data-tool="gram"]');
-        if (tabBtn) tabBtn.addEventListener('click', () => setTimeout(open, 60));
-    }
-
-    window.OOCGram = { mount, open, close };
-})();
+    throw e;
+  }
+});
