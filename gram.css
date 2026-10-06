@@ -310,4 +310,4 @@ html.gram-open, html.gram-open body { overflow: hidden !important; }
 @media (prefers-reduced-motion: reduce) {
     .g-screen, .g-ind { transition: none; }
     .g-bigheart.pop, .g-ibtn.like.on .g-ic svg, .g-spin { animation-duration: .01s; }
-            }
+}
