@@ -1,0 +1,87 @@
+/* =====================================================
+   OOCgram v3.0 - TAMBAHAN
+   Tempel di PALING BAWAH gram.css (jangan hapus isi lama).
+   ===================================================== */
+
+/* ---------- Video ---------- */
+.g-sv-vid { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+video.g-pimg { display: block; }
+.g-grid button { position: relative; }
+.g-vbadge { position: absolute; top: 6px; right: 6px; color: #fff; filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .6)); pointer-events: none; }
+.g-vbadge .g-ic svg { width: 18px; height: 18px; fill: currentColor; stroke: none; }
+
+/* ---------- Kamera: ketuk = foto, tahan = video ---------- */
+.g-shutter { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; transition: transform .2s, border-color .2s, background .2s; }
+.g-shutter.rec { transform: scale(1.18); border-color: var(--g-red); background: var(--g-red); animation: g-recpulse 1s ease-in-out infinite; }
+@keyframes g-recpulse { 50% { box-shadow: 0 0 0 10px rgba(237, 73, 86, .3); } }
+.g-rectime {
+    position: absolute; top: calc(60px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%);
+    padding: 3px 12px; border-radius: 14px; background: var(--g-red); color: #fff; font-weight: 700; font-size: .85rem; z-index: 3;
+}
+.g-cam-hint {
+    position: absolute; left: 0; right: 0; bottom: calc(204px + env(safe-area-inset-bottom, 0px));
+    text-align: center; color: rgba(255, 255, 255, .85); font-size: .8rem; text-shadow: 0 1px 4px rgba(0, 0, 0, .7); pointer-events: none;
+}
+video.g-edit-img { display: block; }
+
+/* ---------- Pesan: cari, catatan, filter ---------- */
+.g-msearch {
+    display: flex; align-items: center; gap: 8px; margin: 4px 12px 6px; padding: 0 14px; height: 44px;
+    background: var(--g-soft); border-radius: 22px; color: var(--g-mute);
+}
+.g-msearch .g-ic svg { width: 20px; height: 20px; }
+.g-msearch .g-in { background: none; border: 0; padding: 8px 0; flex: 1; width: auto; min-width: 0; }
+
+.g-nrow { display: flex; gap: 6px; overflow-x: auto; padding: 14px 10px 8px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.g-nrow::-webkit-scrollbar { display: none; }
+.g-nitem2 { flex: 0 0 auto; width: 92px; display: flex; flex-direction: column; align-items: center; text-align: center; justify-content: flex-end; }
+.g-nitem2 .nav { position: relative; z-index: 1; border-radius: 50%; }
+.g-nitem2 .nm { display: block; max-width: 100%; margin-top: 6px; font-size: .78rem; color: var(--g-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.g-nbub {
+    position: relative; z-index: 2; width: max-content; max-width: 112px; margin-bottom: -14px; padding: 6px 11px;
+    background: var(--g-soft); color: var(--g-fg); border-radius: 18px; font-size: .74rem; line-height: 1.25; text-align: center;
+    overflow-wrap: anywhere; box-shadow: 0 1px 3px rgba(0, 0, 0, .15); cursor: pointer;
+}
+.g-nbub::after { content: ""; position: absolute; left: 16px; bottom: -5px; width: 9px; height: 9px; border-radius: 50%; background: var(--g-soft); }
+.g-nbub.empty { color: var(--g-mute); }
+.g-nbub:disabled { cursor: default; opacity: 1; }
+.g-nbub .sl { display: flex; align-items: center; justify-content: center; gap: 4px; }
+.g-nbub .sl b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80px; }
+.g-nbub .sa { color: var(--g-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-nbub .st { margin-top: 1px; }
+.g-nbub.song .st { color: var(--g-fg); }
+.g-nbub.playing { outline: 2px solid var(--g-blue); }
+
+.g-eq { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 11px; flex-shrink: 0; }
+.g-eq i { display: block; width: 2px; background: currentColor; border-radius: 1px; height: 45%; }
+.g-eq i:nth-child(2) { height: 100%; }
+.g-eq i:nth-child(3) { height: 65%; }
+.playing .g-eq i { animation: g-eqbar .7s ease-in-out infinite; }
+.playing .g-eq i:nth-child(2) { animation-delay: .15s; }
+.playing .g-eq i:nth-child(3) { animation-delay: .3s; }
+@keyframes g-eqbar { 0%, 100% { height: 30%; } 50% { height: 100%; } }
+
+.g-chips { display: flex; gap: 8px; overflow-x: auto; padding: 6px 12px 10px; scrollbar-width: none; }
+.g-chips::-webkit-scrollbar { display: none; }
+.g-chip { flex: 0 0 auto; padding: 7px 14px; border: 1px solid var(--g-line); border-radius: 18px; font-weight: 600; font-size: .88rem; white-space: nowrap; text-align: center; }
+.g-chip.on { background: var(--g-soft); }
+
+/* ---------- Editor catatan & pemilih lagu ---------- */
+.g-npreview { display: flex; justify-content: center; padding: 18px 0 26px; }
+.g-npreview .g-nbub { margin-bottom: 0; font-size: .9rem; max-width: 240px; padding: 9px 16px; }
+.g-npreview .g-nbub .sl b { max-width: 190px; }
+.g-songsel { display: grid; gap: 10px; margin-top: 14px; }
+.g-songsel .row { display: flex; gap: 8px; }
+.g-songsel .row > * { flex: 1; }
+.g-addsong, .g-songsel .g-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.g-addsong .g-ic svg, .g-songsel .g-ic svg { width: 18px; height: 18px; }
+.g-delnote { width: 100%; margin-top: 18px; }
+.g-song { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; }
+.g-song img, .g-song .noart { width: 46px; height: 46px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: var(--g-soft); display: grid; place-items: center; color: var(--g-mute); }
+.g-song .t { flex: 1; min-width: 0; }
+.g-song .t b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-song .t span { display: block; color: var(--g-mute); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-songrow.playing { background: var(--g-soft); }
+.g-playbtn { color: var(--g-blue); }
+.g-songrow.playing .g-playbtn { color: var(--g-red); }

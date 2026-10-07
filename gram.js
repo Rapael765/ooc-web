@@ -1,6 +1,6 @@
 /* =====================================================
    OOCgram - aplikasi mirip Instagram (layar penuh)
-   Beranda + Story, Catatan, Kamera, Pesan pribadi, Profil.
+   Beranda + Story, Kamera (foto & video), Pesan + Catatan berlagu, Profil.
    Wajib masuk / daftar akun dulu. Data lewat /api/gram (Supabase).
    Dimuat SEBELUM tools.js. tools.js memanggil OOCGram.mount(wadah).
    ===================================================== */
@@ -8,9 +8,11 @@
     'use strict';
     if (window.OOCGram) return;
 
-    const VERSION = 'v2.2';
+    const VERSION = 'v3.0';
     const TOKEN_KEY = 'oocgram-token';
     const SEEN_KEY = 'oocgram-seen';
+    const VIDEO_MAX = 45 * 1024 * 1024;   // 45 MB
+    const VIDEO_SEC = 60;                  // maks. 60 detik
     const store = {
         get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
         set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* abaikan */ } },
@@ -26,6 +28,7 @@
     let screens = [];
     const timers = {};
     const cam = { stream: null, facing: 'environment', ui: null };
+    const rec = { mr: null, chunks: [], t0: 0, timer: null, audio: null, active: false, stop: false };
     const feed = { posts: [], more: false, loading: false };
     let storyGroups = [];
     let scope = store.get('oocgram-scope') === 'following' ? 'following' : 'all';
@@ -33,8 +36,18 @@
     let navInd = null, themeBtn = null;
     const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
     let home = null;
+    let chatRefresh = null;
     let seen = new Set();
     try { seen = new Set(JSON.parse(store.get(SEEN_KEY) || '[]')); } catch (e) { seen = new Set(); }
+
+    /* Video di feed: putar otomatis (tanpa suara) saat terlihat */
+    const vidObs = 'IntersectionObserver' in window
+        ? new IntersectionObserver(es => es.forEach(e => {
+            const v = e.target;
+            if (e.isIntersecting && e.intersectionRatio > 0.6) v.play().catch(() => { /* abaikan */ });
+            else v.pause();
+        }), { threshold: [0, 0.6] })
+        : null;
 
     /* ---------- Ikon ---------- */
     const ICONS = {
@@ -55,7 +68,9 @@
         edit: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
         search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>',
         moon: '<svg viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z"/></svg>',
-        sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></svg>'
+        sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></svg>',
+        play: '<svg viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z"/></svg>',
+        music: '<svg viewBox="0 0 24 24"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>'
     };
 
     /* ---------- Pembantu DOM ---------- */
@@ -93,6 +108,7 @@
         if (s < 604800) return Math.floor(s / 86400) + ' h';
         return new Date(iso).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
     }
+    const fmtTime = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
     const PALETTE = ['#f09433', '#e6683c', '#dc2743', '#cc2366', '#bc1888', '#2e7bff', '#22b8a6', '#7a5cff'];
     function avatar(u, size) {
         const a = el('span', 'g-av');
@@ -128,6 +144,23 @@
             back.addEventListener('click', e => { if (e.target === back) done(false); });
             root.append(back);
         });
+    }
+
+    /* ---------- Putar lagu (pratinjau 30 detik) ---------- */
+    let noteAudio = null, noteAudioKey = '';
+    function stopAudio() {
+        if (noteAudio) { noteAudio.pause(); noteAudio = null; }
+        noteAudioKey = '';
+        if (root) root.querySelectorAll('.playing').forEach(x => x.classList.remove('playing'));
+    }
+    function toggleAudio(url, node, key) {
+        if (noteAudio && noteAudioKey === key) { stopAudio(); return; }
+        stopAudio();
+        noteAudio = new Audio(url);
+        noteAudioKey = key;
+        node.classList.add('playing');
+        noteAudio.addEventListener('ended', stopAudio);
+        noteAudio.play().catch(() => { stopAudio(); gtoast('Lagu tidak bisa diputar'); });
     }
 
     /* ---------- API ---------- */
@@ -178,6 +211,52 @@
             const img = await loadImage(url);
             return drawScaled(img, img.naturalWidth, img.naturalHeight, max, q, square);
         } finally { URL.revokeObjectURL(url); }
+    }
+
+    /* ---------- Video ---------- */
+    function cleanVideo(blob) {
+        const t = (blob.type || '').split(';')[0].toLowerCase() || 'video/mp4';
+        if (!['video/mp4', 'video/webm', 'video/quicktime'].includes(t)) throw new Error('Format video tidak didukung (pakai MP4, MOV, atau WebM)');
+        if (blob.size > VIDEO_MAX) throw new Error('Video terlalu besar (maks. 45 MB)');
+        return new Blob([blob], { type: t });
+    }
+    function videoPoster(url) {
+        return new Promise((ok, bad) => {
+            const v = document.createElement('video');
+            v.muted = true; v.playsInline = true; v.preload = 'auto';
+            v.setAttribute('playsinline', '');
+            const fail = () => bad(new Error('Video tidak bisa dibaca di browser ini'));
+            v.onerror = fail;
+            v.onloadedmetadata = () => { try { v.currentTime = 0.1; } catch (e) { /* abaikan */ } };
+            v.onseeked = () => {
+                try { ok({ poster: drawScaled(v, v.videoWidth, v.videoHeight, 720, 0.8, false), duration: v.duration }); }
+                catch (e) { fail(); }
+            };
+            v.src = url;
+            setTimeout(fail, 12000);
+        });
+    }
+    function uploadVideo(blob, folder, onProgress) {
+        return call('upload_url', { folder, mime: blob.type }).then(r => new Promise((ok, bad) => {
+            const fd = new FormData();
+            fd.append('cacheControl', '3600');
+            fd.append('', blob);
+            const x = new XMLHttpRequest();
+            x.open('PUT', r.upload_url);
+            x.upload.onprogress = e => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+            x.onload = () => (x.status < 300 ? ok(r.public_url) : bad(new Error('Gagal mengunggah video (' + x.status + ')')));
+            x.onerror = () => bad(new Error('Gagal mengunggah video. Periksa koneksi internet.'));
+            x.send(fd);
+        }));
+    }
+    function videoEl(src, poster, cls) {
+        const v = document.createElement('video');
+        v.src = src;
+        if (poster) v.poster = poster;
+        v.playsInline = true;
+        v.setAttribute('playsinline', '');
+        if (cls) v.className = cls;
+        return v;
     }
 
     /* ---------- Layar bertumpuk ---------- */
@@ -277,7 +356,7 @@
         navInd = el('span', 'g-ind');
         navEl.append(navInd);
         [['home', 'home', 'Beranda'], ['search', 'search', 'Cari'], ['camera', 'plus', 'Kamera'],
-         ['notes', 'note', 'Catatan'], ['chat', 'send', 'Pesan'], ['me', 'user', 'Profil']].forEach(([id, ic, label]) => {
+         ['chat', 'send', 'Pesan'], ['me', 'user', 'Profil']].forEach(([id, ic, label]) => {
             const b = btn(id === 'camera' ? 'mid' : '', '', () => show(id), ic, label);
             b.dataset.tab = id;
             b.append(label);
@@ -324,12 +403,14 @@
     function show(t, force) {
         if (tab === 'camera' && t !== 'camera') stopCam();
         clearInterval(timers.chats);
+        chatRefresh = null;
+        stopAudio();
         tab = t;
         navEl.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
         view.classList.toggle('cam', t === 'camera');
         view.scrollTop = 0;
         moveInd();
-        ({ home: renderHome, search: renderSearch, notes: renderNotes, camera: renderCamera, chat: renderChat, me: renderMe })[t](force);
+        ({ home: renderHome, search: renderSearch, camera: renderCamera, chat: renderChat, me: renderMe })[t](force);
     }
 
     function enterApp() {
@@ -350,6 +431,7 @@
         clearInterval(timers.unread);
         clearInterval(timers.chats);
         stopCam();
+        stopAudio();
         closeAllScreens();
     }
     function logoutLocal() {
@@ -434,7 +516,7 @@
     function openStoryCamera() { cam.preferStory = true; show('camera'); }
 
     function openStories(groups, start) {
-        let g = start, i = 0;
+        let g = start, i = 0, curVid = null;
         const sv = el('div', 'g-sv');
         const bars = el('div', 'g-sv-bars');
         const head = el('div', 'g-sv-head');
@@ -451,6 +533,10 @@
         function save() {
             store.set(SEEN_KEY, JSON.stringify([...seen].slice(-400)));
         }
+        function setHold(on) {
+            sv.classList.toggle('hold', on);
+            if (curVid) { if (on) curVid.pause(); else curVid.play().catch(() => { /* abaikan */ }); }
+        }
         function exit() { popScreen(); }
         function next() {
             if (i < groups[g].items.length - 1) { i++; paint(); }
@@ -466,24 +552,41 @@
             const grp = groups[g], it = grp.items[i];
             seen.add(it.id);
             save();
+            if (curVid) { curVid.pause(); curVid.remove(); curVid = null; }
+            let fill = null;
             bars.innerHTML = '';
             grp.items.forEach((_, k) => {
                 const b = el('i'), f = el('u');
                 if (k < i) b.classList.add('done');
-                if (k === i) { f.classList.add('run'); f.addEventListener('animationend', next, { once: true }); }
+                if (k === i) {
+                    if (it.video) fill = f;
+                    else { f.classList.add('run'); f.addEventListener('animationend', next, { once: true }); }
+                }
                 b.append(f);
                 bars.append(b);
             });
-            img.src = it.image;
+            if (it.video) {
+                img.hidden = true;
+                const v = videoEl(it.video, it.image, 'g-sv-vid');
+                v.autoplay = true;
+                v.addEventListener('timeupdate', () => { if (fill && v.duration && isFinite(v.duration)) fill.style.width = (v.currentTime / v.duration * 100) + '%'; });
+                v.addEventListener('ended', next, { once: true });
+                sv.insertBefore(v, img.nextSibling);
+                curVid = v;
+                v.play().catch(() => { v.muted = true; v.play().catch(() => { /* abaikan */ }); });
+            } else {
+                img.hidden = false;
+                img.src = it.image;
+            }
             cap.textContent = it.caption || '';
             cap.hidden = !it.caption;
             head.innerHTML = '';
             head.append(avatar(grp.user, 34), txt('b', '', grp.user.username), txt('small', '', ago(it.created_at)), el('span', 'sp'));
             if (grp.user.id === me.id) {
                 head.append(btn('g-ibtn', '', async () => {
-                    sv.classList.add('hold');
+                    setHold(true);
                     const yes = await confirmBox('Hapus story ini?', 'Hapus');
-                    sv.classList.remove('hold');
+                    setHold(false);
                     if (!yes) return;
                     try {
                         await call('story_delete', { id: it.id });
@@ -503,9 +606,9 @@
         }
         left.addEventListener('click', prev);
         right.addEventListener('click', next);
-        ['pointerdown'].forEach(ev => sv.addEventListener(ev, () => sv.classList.add('hold')));
-        ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => sv.addEventListener(ev, () => sv.classList.remove('hold')));
-        pushScreen(sv, () => { drawStories(); });
+        sv.addEventListener('pointerdown', () => setHold(true));
+        ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => sv.addEventListener(ev, () => setHold(false)));
+        pushScreen(sv, () => { if (curVid) { curVid.pause(); curVid = null; } drawStories(); });
         sv.style.transform = 'none';
         paint();
     }
@@ -533,6 +636,7 @@
     }
     function drawFeed() {
         const list = home.list;
+        if (vidObs) vidObs.disconnect();
         list.innerHTML = '';
         if (!feed.posts.length) {
             list.append(scope === 'following'
@@ -569,14 +673,21 @@
             }, 'trash', 'Hapus postingan'));
         }
 
-        const img = new Image();
-        img.src = p.image;
-        img.alt = p.caption || 'Foto dari ' + p.user.username;
-        img.className = 'g-pimg';
-        img.loading = 'lazy';
+        let media;
+        if (p.video) {
+            media = videoEl(p.video, p.image, 'g-pimg');
+            media.controls = true; media.loop = true; media.muted = true; media.preload = 'metadata';
+            if (vidObs) vidObs.observe(media);
+        } else {
+            media = new Image();
+            media.src = p.image;
+            media.alt = p.caption || 'Foto dari ' + p.user.username;
+            media.className = 'g-pimg';
+            media.loading = 'lazy';
+        }
         const heart = el('span', 'g-bigheart');
         heart.append(icon('heartFill'));
-        const wrap = el('div', 'g-pimgwrap', img, heart);
+        const wrap = el('div', 'g-pimgwrap', media, heart);
 
         const likeB = el('button', 'g-ibtn like');
         likeB.type = 'button';
@@ -604,17 +715,19 @@
             paint();
         }
         likeB.addEventListener('click', like);
-        let last = 0;
-        wrap.addEventListener('click', () => {
-            const now = Date.now();
-            if (now - last < 320) {
-                heart.classList.remove('pop');
-                void heart.offsetWidth;
-                heart.classList.add('pop');
-                if (!p.liked) like();
-            }
-            last = now;
-        });
+        if (!p.video) {
+            let last = 0;
+            wrap.addEventListener('click', () => {
+                const now = Date.now();
+                if (now - last < 320) {
+                    heart.classList.remove('pop');
+                    void heart.offsetWidth;
+                    heart.classList.add('pop');
+                    if (!p.liked) like();
+                }
+                last = now;
+            });
+        }
         const openCmt = () => openComments(p, paint);
         cmtLink.addEventListener('click', openCmt);
         const acts = el('div', 'g-pacts', likeB, btn('g-ibtn', '', openCmt, 'comment', 'Komentar'));
@@ -668,9 +781,73 @@
     }
 
     /* =====================================================
-       KAMERA
+       KAMERA (ketuk = foto, tahan = video)
        ===================================================== */
+    function cleanupRec() {
+        clearInterval(rec.timer);
+        if (rec.audio) { rec.audio.getTracks().forEach(t => t.stop()); rec.audio = null; }
+        rec.active = false;
+        rec.mr = null;
+        if (cam.ui) { cam.ui.shutter.classList.remove('rec'); cam.ui.time.hidden = true; }
+    }
+    function abortRec() {
+        if (rec.mr) {
+            rec.mr.onstop = null;
+            try { if (rec.mr.state !== 'inactive') rec.mr.stop(); } catch (e) { /* abaikan */ }
+        }
+        if (rec.active || rec.mr) cleanupRec();
+    }
+    function endRec() {
+        rec.stop = true;
+        clearInterval(rec.timer);
+        if (rec.mr && rec.mr.state === 'recording') rec.mr.stop();
+    }
+    function pickMime() {
+        if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
+        return ['video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+    }
+    async function beginRec(ui) {
+        rec.active = true; rec.stop = false; rec.chunks = [];
+        if (!cam.stream || !window.MediaRecorder) {
+            rec.active = false;
+            gtoast('Rekam video tidak didukung di browser ini. Pilih video dari galeri.');
+            return;
+        }
+        let stream = cam.stream;
+        rec.audio = null;
+        try {
+            rec.audio = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream = new MediaStream(cam.stream.getVideoTracks().concat(rec.audio.getAudioTracks()));
+        } catch (e) { rec.audio = null; }
+        const mime = pickMime();
+        let mr;
+        try { mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream); }
+        catch (e) { cleanupRec(); gtoast('Rekam video gagal'); return; }
+        rec.mr = mr;
+        mr.ondataavailable = e => { if (e.data && e.data.size) rec.chunks.push(e.data); };
+        mr.onstop = () => {
+            const type = mr.mimeType || mime || 'video/webm';
+            const blob = new Blob(rec.chunks, { type });
+            const dur = (Date.now() - rec.t0) / 1000;
+            cleanupRec();
+            if (dur < 0.8) { gtoast('Video terlalu pendek'); return; }
+            openEditorVideo(blob, dur);
+        };
+        mr.start(500);
+        rec.t0 = Date.now();
+        ui.shutter.classList.add('rec');
+        ui.time.hidden = false;
+        ui.time.textContent = '0:00';
+        rec.timer = setInterval(() => {
+            const s = (Date.now() - rec.t0) / 1000;
+            ui.time.textContent = fmtTime(s);
+            if (s >= VIDEO_SEC) endRec();
+        }, 200);
+        if (rec.stop) endRec();
+    }
+
     function stopCam() {
+        abortRec();
         if (cam.stream) { cam.stream.getTracks().forEach(t => t.stop()); cam.stream = null; }
     }
     function camFail(message) {
@@ -686,7 +863,7 @@
         if (!ui) return;
         ui.msg.hidden = true;
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            camFail('Kamera tidak didukung di browser ini. Kamu tetap bisa memilih foto dari galeri.');
+            camFail('Kamera tidak didukung di browser ini. Kamu tetap bisa memilih foto atau video dari galeri.');
             return;
         }
         try {
@@ -699,7 +876,7 @@
             ui.vid.classList.toggle('mirror', cam.facing === 'user');
             ui.vid.play().catch(() => { /* abaikan */ });
         } catch (e) {
-            camFail('Kamera tidak bisa dibuka. Izinkan akses kamera di browser, atau pilih foto dari galeri.');
+            camFail('Kamera tidak bisa dibuka. Izinkan akses kamera di browser, atau pilih foto/video dari galeri.');
         }
     }
     function renderCamera() {
@@ -710,65 +887,119 @@
         const msg = el('div', 'g-cam-msg');
         msg.hidden = true;
         const file = el('input');
-        file.type = 'file'; file.accept = 'image/*'; file.hidden = true;
+        file.type = 'file'; file.accept = 'image/*,video/*'; file.hidden = true;
         const flip = btn('g-cam-flip', '', () => { cam.facing = cam.facing === 'user' ? 'environment' : 'user'; startCam(); }, 'flip', 'Ganti kamera');
         const shutter = el('button', 'g-shutter');
         shutter.type = 'button';
-        shutter.setAttribute('aria-label', 'Ambil foto');
+        shutter.setAttribute('aria-label', 'Ketuk untuk foto, tahan untuk video');
         const gal = btn('g-cam-gal', 'Galeri', () => file.click(), 'image');
         const bar = el('div', 'g-cam-bar', gal, shutter, el('span'));
-        view.append(el('div', 'g-cam', vid, msg, flip, bar, file));
-        cam.ui = { vid, msg, file };
+        const time = el('div', 'g-rectime', '0:00');
+        time.hidden = true;
+        const hint = txt('div', 'g-cam-hint', 'Ketuk untuk foto · Tahan untuk video');
+        view.append(el('div', 'g-cam', vid, msg, flip, time, hint, bar, file));
+        cam.ui = { vid, msg, file, shutter, time };
 
-        shutter.addEventListener('click', () => {
+        let holdT = null;
+        const takePhoto = () => {
             if (!vid.videoWidth) { gtoast('Kamera belum siap'); return; }
-            openEditor(drawScaled(vid, vid.videoWidth, vid.videoHeight, 1080, 0.85, false));
+            openEditor({ kind: 'image', dataUrl: drawScaled(vid, vid.videoWidth, vid.videoHeight, 1080, 0.85, false) });
+        };
+        shutter.addEventListener('pointerdown', e => {
+            e.preventDefault();
+            try { shutter.setPointerCapture(e.pointerId); } catch (err) { /* abaikan */ }
+            clearTimeout(holdT);
+            holdT = setTimeout(() => { holdT = null; beginRec(cam.ui); }, 350);
         });
+        shutter.addEventListener('pointerup', () => {
+            if (holdT) { clearTimeout(holdT); holdT = null; takePhoto(); }
+            else if (rec.active) endRec();
+        });
+        shutter.addEventListener('pointercancel', () => {
+            clearTimeout(holdT); holdT = null;
+            if (rec.active) endRec();
+        });
+        shutter.addEventListener('contextmenu', e => e.preventDefault());
+        shutter.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); takePhoto(); } });
+
         file.addEventListener('change', async () => {
             const f = file.files[0];
             file.value = '';
             if (!f) return;
-            try { openEditor(await fileToJpeg(f, 1080, 0.85, false)); }
-            catch (e) { gtoast(e.message); }
+            try {
+                if ((f.type || '').startsWith('video/') || (!f.type && /\.(mp4|mov|webm)$/i.test(f.name))) await openEditorVideo(f, 0);
+                else openEditor({ kind: 'image', dataUrl: await fileToJpeg(f, 1080, 0.85, false) });
+            } catch (e) { gtoast(e.message); }
         });
         startCam();
     }
 
-    function openEditor(dataUrl) {
+    async function openEditorVideo(blob, knownDur) {
+        let url = '';
+        try {
+            const b = cleanVideo(blob);
+            url = URL.createObjectURL(b);
+            const info = await videoPoster(url);
+            const d = isFinite(info.duration) && info.duration > 0 ? info.duration : knownDur;
+            if (d > VIDEO_SEC + 1) throw new Error('Video terlalu panjang (maks. ' + VIDEO_SEC + ' detik)');
+            openEditor({ kind: 'video', blob: b, url, poster: info.poster, duration: d });
+        } catch (e) {
+            if (url) URL.revokeObjectURL(url);
+            gtoast(e.message);
+        }
+    }
+
+    function openEditor(m) {
         stopCam();
         let mode = cam.preferStory ? 'story' : 'post';
         cam.preferStory = false;
-        const img = new Image();
-        img.src = dataUrl; img.alt = 'Pratinjau'; img.className = 'g-edit-img';
+        let prev;
+        if (m.kind === 'video') {
+            prev = videoEl(m.url, m.poster, 'g-edit-img');
+            prev.controls = true; prev.loop = true; prev.muted = true; prev.autoplay = true;
+        } else {
+            prev = new Image();
+            prev.src = m.dataUrl; prev.alt = 'Pratinjau'; prev.className = 'g-edit-img';
+        }
+        const cleanup = () => { if (m.url) URL.revokeObjectURL(m.url); };
         const pBtn = btn('on', 'Postingan'), sBtn = btn('', 'Story');
         const cap = el('textarea', 'g-ta');
         cap.placeholder = 'Tulis keterangan...';
         const share = btn('g-link', 'Bagikan');
-        function setMode(m) {
-            mode = m;
-            pBtn.classList.toggle('on', m === 'post');
-            sBtn.classList.toggle('on', m === 'story');
-            cap.maxLength = m === 'post' ? 500 : 120;
-            cap.placeholder = m === 'post' ? 'Tulis keterangan...' : 'Tulis teks untuk story (opsional)';
+        function setMode(md) {
+            mode = md;
+            pBtn.classList.toggle('on', md === 'post');
+            sBtn.classList.toggle('on', md === 'story');
+            cap.maxLength = md === 'post' ? 500 : 120;
+            cap.placeholder = md === 'post' ? 'Tulis keterangan...' : 'Tulis teks untuk story (opsional)';
         }
         pBtn.addEventListener('click', () => setMode('post'));
         sBtn.addEventListener('click', () => setMode('story'));
         setMode(mode);
-        const head = screenHead('Baru', share);
-        const scr = el('div', '', head, el('div', 'g-sbody', img, el('div', 'g-edit-body', el('div', 'g-seg', pBtn, sBtn), cap)));
-        pushScreen(scr, () => { if (tab === 'camera') startCam(); });
+        const head = screenHead(m.kind === 'video' ? 'Video baru' : 'Baru', share);
+        const scr = el('div', '', head, el('div', 'g-sbody', prev, el('div', 'g-edit-body', el('div', 'g-seg', pBtn, sBtn), cap)));
+        pushScreen(scr, () => { cleanup(); if (tab === 'camera') startCam(); });
 
         share.addEventListener('click', async () => {
             share.disabled = true;
             share.textContent = 'Mengirim...';
             try {
+                const payload = { caption: cap.value.trim() };
+                if (m.kind === 'video') {
+                    payload.video = await uploadVideo(m.blob, mode === 'post' ? 'posts' : 'stories', f => {
+                        share.textContent = 'Mengunggah ' + Math.round(f * 100) + '%';
+                    });
+                    share.textContent = 'Menyimpan...';
+                    payload.image = m.poster;
+                } else payload.image = m.dataUrl;
                 if (mode === 'post') {
-                    const r = await call('post_create', { image: dataUrl, caption: cap.value.trim() });
+                    const r = await call('post_create', payload);
                     feed.posts.unshift(r.post);
                 } else {
-                    await call('story_add', { image: dataUrl, caption: cap.value.trim() });
+                    await call('story_add', payload);
                     storyGroups = [];
                 }
+                cleanup();
                 screens.splice(screens.findIndex(s => s.node === scr), 1);
                 scr.remove();
                 closeAllScreens();
@@ -783,96 +1014,209 @@
     }
 
     /* =====================================================
-       CATATAN
+       PESAN + CATATAN (satu halaman, gaya Instagram)
        ===================================================== */
-    async function renderNotes() {
-        view.innerHTML = '';
-        const box = el('div', 'g-pad');
-        view.append(box);
-        box.append(txt('h2', 'g-h', 'Catatan'),
-            txt('p', 'g-mute', 'Tulis kabar singkat (maks. 60 huruf). Teman bisa melihatnya selama 24 jam.'));
-
-        const input = el('input', 'g-in');
-        input.type = 'text'; input.maxLength = 60; input.placeholder = 'Lagi mikirin apa?';
-        const count = txt('div', 'g-count', '0/60');
-        input.addEventListener('input', () => { count.textContent = input.value.length + '/60'; });
-        const shareB = btn('g-primary', 'Bagikan');
-        const delB = btn('g-secondary g-danger', 'Hapus');
-        delB.hidden = true;
-        const mine = el('div', 'g-mynote', el('div', '', avatar(me, 44)), el('div', 'row', input, shareB), count, delB);
-        const grid = el('div', 'g-notes-grid');
-        box.append(mine, txt('h3', 'g-h', 'Catatan teman'), grid);
-        grid.append(el('div', 'g-spin'));
-
-        async function load() {
-            try {
-                const r = await call('notes');
-                grid.innerHTML = '';
-                const my = r.notes.find(n => n.user.id === me.id);
-                delB.hidden = !my;
-                if (my && !input.value) { input.value = my.body; count.textContent = my.body.length + '/60'; }
-                const others = r.notes.filter(n => n.user.id !== me.id);
-                if (!others.length) {
-                    grid.style.display = 'block';
-                    grid.append(txt('div', 'g-empty', 'Belum ada catatan dari teman.'));
-                    return;
-                }
-                grid.style.display = '';
-                others.forEach(n => {
-                    const b = el('div', 'g-nitem');
-                    b.tabIndex = 0;
-                    b.setAttribute('role', 'button');
-                    b.addEventListener('keydown', e => { if (e.key === 'Enter') openChat(n.user); });
-                    b.append(txt('span', 'nbub', n.body), avatar(n.user, 60), txt('span', 'nm', n.user.name), txt('small', '', ago(n.created_at)));
-                    b.addEventListener('click', () => openChat(n.user));
-                    grid.append(b);
-                });
-            } catch (e) { grid.innerHTML = ''; grid.style.display = 'block'; grid.append(txt('div', 'g-empty', e.message)); }
-        }
-        shareB.addEventListener('click', async () => {
-            const body = input.value.trim();
-            if (!body) { gtoast('Tulis catatan dulu'); return; }
-            shareB.disabled = true;
-            try { await call('note_set', { body }); gtoast('Catatan dibagikan ✨'); await load(); }
-            catch (e) { gtoast(e.message); }
-            shareB.disabled = false;
-        });
-        delB.addEventListener('click', async () => {
-            try { await call('note_clear'); input.value = ''; count.textContent = '0/60'; gtoast('Catatan dihapus'); await load(); }
-            catch (e) { gtoast(e.message); }
-        });
-        load();
+    function eq() { return el('span', 'g-eq', el('i'), el('i'), el('i')); }
+    function noteBubble(n) {
+        const b = el('button', 'g-nbub' + (n && n.song ? ' song' : '') + (n ? '' : ' empty'));
+        b.type = 'button';
+        if (!n) { b.textContent = 'Tulis catatan...'; return b; }
+        if (n.song) b.append(el('div', 'sl', eq(), txt('b', '', n.song.title)), txt('div', 'sa', n.song.artist));
+        if (n.body) b.append(txt('div', 'st', n.body));
+        return b;
+    }
+    function noteItem(user, note, label, onAvatar, onBubble) {
+        const it = el('div', 'g-nitem2');
+        const bub = noteBubble(note);
+        bub.addEventListener('click', e => { e.stopPropagation(); onBubble(bub); });
+        const av = el('button', 'nav');
+        av.type = 'button';
+        av.setAttribute('aria-label', label);
+        av.append(avatar(user, 64));
+        av.addEventListener('click', onAvatar);
+        it.append(bub, av, txt('span', 'nm', label));
+        return it;
     }
 
-    /* =====================================================
-       PESAN PRIBADI
-       ===================================================== */
     function renderChat() {
         view.innerHTML = '';
+        const st = { chats: [], notes: [], filter: 'primary', unreadOnly: false, q: '', sig: null, loaded: false };
+        const q = el('input', 'g-in');
+        q.type = 'search'; q.placeholder = 'Cari pesan...'; q.maxLength = 30;
+        q.setAttribute('aria-label', 'Cari pesan');
+        const search = el('div', 'g-msearch', icon('search'), q);
+        const notesRow = el('div', 'g-nrow');
+        const chips = el('div', 'g-chips');
         const list = el('div', 'g-chats');
-        view.append(el('div', 'g-chat-top', txt('b', '', 'Pesan'), btn('g-newbtn', 'Pesan baru', openUserSearch, 'edit')), list);
+        view.append(
+            el('div', 'g-chat-top', txt('b', '', me.username), btn('g-newbtn', 'Pesan baru', openUserSearch, 'edit')),
+            search, notesRow, chips, list);
         list.append(el('div', 'g-spin'));
+
+        const unreadChip = btn('g-chip', 'Belum dibaca', () => { st.unreadOnly = !st.unreadOnly; paintChips(); drawList(); });
+        const tabChips = [['primary', 'Utama'], ['requests', 'Permintaan'], ['general', 'Umum']].map(([id, label]) => {
+            const b = btn('g-chip', label, () => { st.filter = id; paintChips(); drawList(); });
+            b.dataset.f = id;
+            return b;
+        });
+        chips.append(unreadChip, ...tabChips);
+        function paintChips() {
+            unreadChip.classList.toggle('on', st.unreadOnly);
+            tabChips.forEach(b => b.classList.toggle('on', b.dataset.f === st.filter));
+        }
+        paintChips();
+        q.addEventListener('input', () => { st.q = q.value.trim().toLowerCase(); drawList(); });
+
+        function drawNotes() {
+            const my = st.notes.find(n => n.user.id === me.id) || null;
+            notesRow.innerHTML = '';
+            const own = () => openNoteEditor(my, () => chatRefresh && chatRefresh());
+            notesRow.append(noteItem(me, my, 'Catatanmu', own, own));
+            st.notes.filter(n => n.user.id !== me.id).forEach(n => {
+                notesRow.append(noteItem(n.user, n, n.user.name, () => openChat(n.user), bub => {
+                    if (n.song) toggleAudio(n.song.url, bub, n.user.id + n.created_at);
+                    else openChat(n.user);
+                }));
+            });
+        }
+        function drawList() {
+            list.innerHTML = '';
+            if (!st.loaded) { list.append(el('div', 'g-spin')); return; }
+            const rows = st.chats.filter(c => {
+                const prim = c.following || c.replied;
+                if (st.filter === 'primary' && !prim) return false;
+                if (st.filter === 'requests' && prim) return false;
+                if (st.unreadOnly && !c.unread) return false;
+                if (st.q && !(c.user.name + ' ' + c.user.username).toLowerCase().includes(st.q)) return false;
+                return true;
+            });
+            if (!rows.length) {
+                const none = st.chats.length === 0;
+                list.append(none
+                    ? el('div', 'g-empty', txt('span', 'big', '💬'), 'Belum ada pesan. Ketuk “Pesan baru” untuk mulai ngobrol.')
+                    : el('div', 'g-empty', st.filter === 'requests' ? 'Tidak ada permintaan pesan.' : 'Tidak ada pesan yang cocok.'));
+                return;
+            }
+            rows.forEach(c => {
+                const row = el('button', 'g-crow' + (c.unread ? ' unread' : ''));
+                row.type = 'button';
+                row.append(avatar(c.user, 52),
+                    el('div', 't', txt('b', '', c.user.name), txt('span', '', (c.last.mine ? 'Kamu: ' : '') + c.last.body + ' · ' + ago(c.last.created_at))));
+                if (c.unread) row.append(el('span', 'dot'));
+                row.addEventListener('click', () => openChat(c.user));
+                list.append(row);
+            });
+        }
         async function load() {
             try {
-                const r = await call('chats');
-                list.innerHTML = '';
-                if (!r.chats.length) {
-                    list.append(el('div', 'g-empty', txt('span', 'big', '💬'), 'Belum ada pesan. Ketuk “Pesan baru” untuk mulai ngobrol.'));
-                    return;
-                }
-                r.chats.forEach(c => {
-                    const row = el('button', 'g-crow' + (c.unread ? ' unread' : ''));
-                    row.type = 'button';
-                    row.append(avatar(c.user, 52),
-                        el('div', 't', txt('b', '', c.user.name), txt('span', '', (c.last.mine ? 'Kamu: ' : '') + c.last.body + ' · ' + ago(c.last.created_at))));
-                    if (c.unread) row.append(el('span', 'dot'));
-                    row.addEventListener('click', () => openChat(c.user));
-                    list.append(row);
-                });
-            } catch (e) { if (!list.querySelector('.g-crow')) { list.innerHTML = ''; list.append(txt('div', 'g-empty', e.message)); } }
+                const [c, n] = await Promise.all([call('chats'), call('notes').catch(() => ({ notes: st.notes }))]);
+                if (tab !== 'chat') return;
+                st.chats = c.chats;
+                st.notes = n.notes;
+                st.loaded = true;
+                const sig = JSON.stringify(st.notes.map(x => x.user.id + x.created_at));
+                if (sig !== st.sig) { st.sig = sig; drawNotes(); }
+                drawList();
+            } catch (e) {
+                if (!st.loaded) { list.innerHTML = ''; list.append(txt('div', 'g-empty', e.message)); }
+            }
         }
+        drawNotes();
+        chatRefresh = () => { st.sig = null; load(); };
         load();
         timers.chats = setInterval(() => { if (tab === 'chat' && !screens.length) load(); }, 8000);
+    }
+
+    /* ---------- Editor catatan + lagu ---------- */
+    function songRow(s) {
+        const art = s.art ? (() => { const i = new Image(); i.src = s.art; i.alt = ''; return i; })() : el('div', 'noart', icon('music'));
+        return el('div', 'g-song', art, el('div', 't', txt('b', '', s.title), txt('span', '', s.artist)));
+    }
+    function openNoteEditor(my, onDone) {
+        let song = my && my.song ? Object.assign({}, my.song) : null;
+        const input = el('input', 'g-in');
+        input.type = 'text'; input.maxLength = 60; input.placeholder = 'Bagikan sesuatu...';
+        input.value = my ? my.body : '';
+        const count = txt('div', 'g-count', input.value.length + '/60');
+        const preview = el('div', 'g-npreview');
+        const songBox = el('div', 'g-songsel');
+        const share = btn('g-link', 'Bagikan');
+
+        function paintPrev() {
+            const body = input.value.trim();
+            preview.innerHTML = '';
+            const b = noteBubble(body || song ? { body, song } : null);
+            b.disabled = true;
+            preview.append(b);
+        }
+        function paintSong() {
+            songBox.innerHTML = '';
+            if (song) {
+                songBox.append(songRow(song), el('div', 'row',
+                    btn('g-secondary', 'Ganti lagu', pick, 'music'),
+                    btn('g-secondary g-danger', 'Hapus lagu', () => { song = null; paintSong(); paintPrev(); })));
+            } else songBox.append(btn('g-secondary g-addsong', 'Tambah lagu', pick, 'music'));
+        }
+        function pick() { openSongPicker(s => { song = s; paintSong(); paintPrev(); }); }
+        input.addEventListener('input', () => { count.textContent = input.value.length + '/60'; paintPrev(); });
+
+        const body = el('div', 'g-pad', preview, el('div', 'g-form', input, count), songBox,
+            txt('p', 'g-mute g-note-small', 'Catatan terlihat oleh teman selama 24 jam. Lagu yang dipilih diputar 30 detik saat catatan diketuk.'));
+        if (my) body.append(btn('g-secondary g-danger g-delnote', 'Hapus catatan', async () => {
+            try { await call('note_clear'); popScreen(); gtoast('Catatan dihapus'); if (onDone) onDone(); }
+            catch (e) { gtoast(e.message); }
+        }));
+        pushScreen(el('div', '', screenHead('Catatan baru', share), el('div', 'g-sbody', body)));
+        paintSong(); paintPrev();
+        share.addEventListener('click', async () => {
+            const text = input.value.trim();
+            if (!text && !song) { gtoast('Tulis catatan atau pilih lagu dulu'); return; }
+            share.disabled = true;
+            try {
+                await call('note_set', { body: text, song });
+                popScreen();
+                gtoast('Catatan dibagikan ✨');
+                if (onDone) onDone();
+            } catch (e) { gtoast(e.message); share.disabled = false; }
+        });
+    }
+    function openSongPicker(onPick) {
+        const q = el('input', 'g-in');
+        q.type = 'search'; q.placeholder = 'Cari judul lagu atau artis...'; q.maxLength = 60;
+        const list = el('div', 'g-sbody');
+        pushScreen(el('div', '', screenHead('Pilih lagu'), el('div', 'g-pad', q), list), stopAudio);
+        let t, n = 0;
+        function hint(s) { list.innerHTML = ''; list.append(txt('div', 'g-empty', s)); }
+        async function load() {
+            const term = q.value.trim();
+            if (!term) { hint('Ketik judul lagu atau nama artis.'); return; }
+            const my = ++n;
+            list.innerHTML = '';
+            list.append(el('div', 'g-spin'));
+            try {
+                const res = await fetch('https://itunes.apple.com/search?media=music&entity=song&limit=20&term=' + encodeURIComponent(term));
+                const j = await res.json();
+                if (my !== n) return;
+                const items = (j.results || []).filter(r => r.previewUrl && r.trackName);
+                if (!items.length) { hint('Lagu tidak ditemukan.'); return; }
+                list.innerHTML = '';
+                items.forEach(r => {
+                    const s = { title: r.trackName, artist: r.artistName || '', url: r.previewUrl, art: r.artworkUrl100 || '' };
+                    const row = el('div', 'g-crow g-songrow');
+                    row.tabIndex = 0;
+                    row.setAttribute('role', 'button');
+                    const play = btn('g-ibtn g-playbtn', '', e => { e.stopPropagation(); toggleAudio(s.url, row, 'pick' + s.url); }, 'play', 'Putar pratinjau');
+                    row.append(songRow(s), play);
+                    const choose = () => { stopAudio(); popScreen(); onPick(s); };
+                    row.addEventListener('click', choose);
+                    row.addEventListener('keydown', e => { if (e.key === 'Enter') choose(); });
+                    list.append(row);
+                });
+            } catch (e) { if (my === n) hint('Pencarian lagu gagal. Periksa koneksi internet.'); }
+        }
+        q.addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 400); });
+        hint('Ketik judul lagu atau nama artis.');
+        setTimeout(() => q.focus(), 300);
     }
 
     function openUserSearch() {
@@ -1097,6 +1441,7 @@
             const i = new Image();
             i.src = p.image; i.alt = p.caption || 'Postingan'; i.loading = 'lazy';
             b.append(i);
+            if (p.video) b.append(el('span', 'g-vbadge', icon('play')));
             b.addEventListener('click', () => openPostViewer(p, u));
             grid.append(b);
         });
@@ -1105,9 +1450,15 @@
         return wrap;
     }
     function openPostViewer(p, user) {
-        const img = new Image();
-        img.src = p.image; img.alt = p.caption || 'Postingan'; img.className = 'g-pimg';
-        const body = el('div', 'g-sbody', img);
+        let media;
+        if (p.video) {
+            media = videoEl(p.video, p.image, 'g-pimg');
+            media.controls = true; media.loop = true; media.autoplay = true;
+        } else {
+            media = new Image();
+            media.src = p.image; media.alt = p.caption || 'Postingan'; media.className = 'g-pimg';
+        }
+        const body = el('div', 'g-sbody', media);
         if (p.caption) body.append(el('div', 'g-cap', txt('b', '', user.username + ' '), p.caption));
         body.append(txt('div', 'g-ptime', ago(p.created_at)));
         let right = null;
@@ -1123,7 +1474,7 @@
                 } catch (e) { gtoast(e.message); }
             }, 'trash', 'Hapus postingan');
         }
-        pushScreen(el('div', '', screenHead(user.username, right), body));
+        pushScreen(el('div', '', screenHead(user.username, right), body), () => { if (p.video) media.pause(); });
     }
     function openEditProfile() {
         const name = field('text', 'Nama', 'name', 30);
@@ -1215,6 +1566,7 @@
         clearInterval(timers.unread);
         clearInterval(timers.chats);
         stopCam();
+        stopAudio();
         closeAllScreens();
     }
 
@@ -1225,8 +1577,8 @@
         box.append(el('div', 'g-launch',
             txt('div', 'g-logo', 'OOCgram'),
             txt('p', '', 'Media sosial mini untuk circle OOC'),
-            el('ul', '', txt('li', '', '📷 Posting foto & story dari kamera'),
-                txt('li', '', '📝 Catatan singkat 24 jam'),
+            el('ul', '', txt('li', '', '📷 Posting foto, video & story dari kamera'),
+                txt('li', '', '🎵 Catatan 24 jam dengan lagu'),
                 txt('li', '', '💬 Chat pribadi antar anggota')),
             btn('g-primary', 'BUKA OOCGRAM', open)));
         const tabBtn = document.querySelector('.tool-tabs [data-tool="gram"]');
