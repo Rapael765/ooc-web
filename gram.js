@@ -8,7 +8,7 @@
     'use strict';
     if (window.OOCGram) return;
 
-    const VERSION = 'v3.0';
+    const VERSION = 'v3.1';
     const TOKEN_KEY = 'oocgram-token';
     const SEEN_KEY = 'oocgram-seen';
     const VIDEO_MAX = 45 * 1024 * 1024;   // 45 MB
@@ -70,7 +70,12 @@
         moon: '<svg viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z"/></svg>',
         sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></svg>',
         play: '<svg viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z"/></svg>',
-        music: '<svg viewBox="0 0 24 24"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>'
+        music: '<svg viewBox="0 0 24 24"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>',
+        bookmark: '<svg viewBox="0 0 24 24"><path d="M6 3.5h12v17l-6-4.5-6 4.5z"/></svg>',
+        bookmarkFill: '<svg viewBox="0 0 24 24"><path class="fill" d="M6 3.5h12v17l-6-4.5-6 4.5z"/></svg>',
+        palette: '<svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.4 0 2-1 1.4-2-.7-1.2.1-2.5 1.5-2.5H17a4 4 0 0 0 4-4c0-5-4-9.5-9-9.5z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/></svg>',
+        chev: '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
+        chevR: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>'
     };
 
     /* ---------- Pembantu DOM ---------- */
@@ -405,6 +410,7 @@
         clearInterval(timers.chats);
         chatRefresh = null;
         stopAudio();
+        appEl.classList.toggle('nochrome', t === 'chat');
         tab = t;
         navEl.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
         view.classList.toggle('cam', t === 'camera');
@@ -1016,11 +1022,23 @@
     /* =====================================================
        PESAN + CATATAN (satu halaman, gaya Instagram)
        ===================================================== */
+    function isLight(hex) {
+        const m = /^#([0-9a-f]{6})$/i.exec(hex || '');
+        if (!m) return false;
+        const v = parseInt(m[1], 16);
+        return (0.299 * (v >> 16) + 0.587 * ((v >> 8) & 255) + 0.114 * (v & 255)) > 170;
+    }
+    function tintBubble(node, color) {
+        node.classList.toggle('colored', !!color);
+        node.classList.toggle('light', !!color && isLight(color));
+        if (color) node.style.setProperty('--nb', color); else node.style.removeProperty('--nb');
+    }
     function eq() { return el('span', 'g-eq', el('i'), el('i'), el('i')); }
     function noteBubble(n) {
         const b = el('button', 'g-nbub' + (n && n.song ? ' song' : '') + (n ? '' : ' empty'));
         b.type = 'button';
-        if (!n) { b.textContent = 'Tulis catatan...'; return b; }
+        tintBubble(b, n && n.color);
+        if (!n) { b.textContent = 'Catatan...'; return b; }
         if (n.song) b.append(el('div', 'sl', eq(), txt('b', '', n.song.title)), txt('div', 'sa', n.song.artist));
         if (n.body) b.append(txt('div', 'st', n.body));
         return b;
@@ -1038,33 +1056,71 @@
         return it;
     }
 
+    /* ---------- Lagu tersimpan (bookmark) ---------- */
+    const SAVED_KEY = 'oocgram-saved-songs';
+    let savedSongs = [];
+    try { savedSongs = JSON.parse(store.get(SAVED_KEY) || '[]'); } catch (e) { savedSongs = []; }
+    if (!Array.isArray(savedSongs)) savedSongs = [];
+    const isSaved = s => savedSongs.some(x => x.url === s.url);
+    function toggleSaved(s) {
+        const i = savedSongs.findIndex(x => x.url === s.url);
+        if (i >= 0) savedSongs.splice(i, 1); else savedSongs.unshift(s);
+        savedSongs = savedSongs.slice(0, 50);
+        store.set(SAVED_KEY, JSON.stringify(savedSongs));
+        return i < 0;
+    }
+
+    const BUBBLE_COLORS = [
+        ['#b794ff', '#7a3cff', '#4a00b8', '#f58cff', '#d400c6', '#8a0085'],
+        ['#ffb199', '#ff6a3d', '#d9381e', '#ffd166', '#f5a300', '#b36b00'],
+        ['#9bd5ff', '#2e7bff', '#0a3fb5', '#8ef0d6', '#19b894', '#0b7a63'],
+        ['#c5f08a', '#7ac928', '#3b7d0a', '#ff9ec4', '#ff3d7f', '#b0124f'],
+        ['#ffffff', '#c7c7c7', '#737373', '#3a3a3c', '#000000', '#1c2a4a']
+    ];
+
+    /* =====================================================
+       HALAMAN PESAN (gaya Instagram)
+       ===================================================== */
     function renderChat() {
         view.innerHTML = '';
-        const st = { chats: [], notes: [], filter: 'primary', unreadOnly: false, q: '', sig: null, loaded: false };
+        const st = { chats: [], notes: [], filter: 'all', unreadOnly: false, q: '', sig: null, loaded: false };
+        const catOf = c => (c.following ? 'primary' : (c.replied ? 'general' : 'requests'));
+
         const q = el('input', 'g-in');
         q.type = 'search'; q.placeholder = 'Cari pesan...'; q.maxLength = 30;
         q.setAttribute('aria-label', 'Cari pesan');
-        const search = el('div', 'g-msearch', icon('search'), q);
+        const filterLink = btn('g-filterlink', 'Filter', () => {
+            st.unreadOnly = !st.unreadOnly;
+            filterLink.classList.toggle('on', st.unreadOnly);
+            drawList();
+        });
+        filterLink.title = 'Tampilkan hanya pesan yang belum dibaca';
+        const top = el('div', 'g-chat-top',
+            btn('g-ibtn', '', close, 'close', 'Tutup OOCgram'),
+            el('div', 'g-chat-title', txt('b', '', me.username), icon('chev')),
+            btn('g-ibtn', '', openUserSearch, 'edit', 'Pesan baru'));
+        const searchRow = el('div', 'g-searchrow', el('div', 'g-msearch', icon('search'), q), filterLink);
         const notesRow = el('div', 'g-nrow');
         const chips = el('div', 'g-chips');
         const list = el('div', 'g-chats');
-        view.append(
-            el('div', 'g-chat-top', txt('b', '', me.username), btn('g-newbtn', 'Pesan baru', openUserSearch, 'edit')),
-            search, notesRow, chips, list);
+        view.append(top, searchRow, notesRow, chips, list);
         list.append(el('div', 'g-spin'));
 
-        const unreadChip = btn('g-chip', 'Belum dibaca', () => { st.unreadOnly = !st.unreadOnly; paintChips(); drawList(); });
-        const tabChips = [['primary', 'Utama'], ['requests', 'Permintaan'], ['general', 'Umum']].map(([id, label]) => {
-            const b = btn('g-chip', label, () => { st.filter = id; paintChips(); drawList(); });
-            b.dataset.f = id;
-            return b;
-        });
-        chips.append(unreadChip, ...tabChips);
         function paintChips() {
-            unreadChip.classList.toggle('on', st.unreadOnly);
-            tabChips.forEach(b => b.classList.toggle('on', b.dataset.f === st.filter));
+            chips.innerHTML = '';
+            [['all', 'Semua'], ['primary', 'Utama'], ['general', 'Umum'], ['requests', 'Permintaan']].forEach(([id, label]) => {
+                const n = st.chats.filter(c => c.unread && (id === 'all' || catOf(c) === id)).length;
+                const b = el('button', 'g-chip' + (st.filter === id ? ' on' : ''));
+                b.type = 'button';
+                const showN = n && (id === 'all' || id === 'primary');
+                if (showN) b.append(el('span', 'cdot'));
+                b.append(label);
+                if (showN) b.append(txt('span', 'cnt', String(n)));
+                if (id === 'requests') b.append(icon('chevR'));
+                b.addEventListener('click', () => { st.filter = id; paintChips(); drawList(); });
+                chips.append(b);
+            });
         }
-        paintChips();
         q.addEventListener('input', () => { st.q = q.value.trim().toLowerCase(); drawList(); });
 
         function drawNotes() {
@@ -1073,7 +1129,7 @@
             const own = () => openNoteEditor(my, () => chatRefresh && chatRefresh());
             notesRow.append(noteItem(me, my, 'Catatanmu', own, own));
             st.notes.filter(n => n.user.id !== me.id).forEach(n => {
-                notesRow.append(noteItem(n.user, n, n.user.name, () => openChat(n.user), bub => {
+                notesRow.append(noteItem(n.user, n, n.user.username, () => openChat(n.user), bub => {
                     if (n.song) toggleAudio(n.song.url, bub, n.user.id + n.created_at);
                     else openChat(n.user);
                 }));
@@ -1083,25 +1139,22 @@
             list.innerHTML = '';
             if (!st.loaded) { list.append(el('div', 'g-spin')); return; }
             const rows = st.chats.filter(c => {
-                const prim = c.following || c.replied;
-                if (st.filter === 'primary' && !prim) return false;
-                if (st.filter === 'requests' && prim) return false;
+                if (st.filter !== 'all' && catOf(c) !== st.filter) return false;
                 if (st.unreadOnly && !c.unread) return false;
                 if (st.q && !(c.user.name + ' ' + c.user.username).toLowerCase().includes(st.q)) return false;
                 return true;
             });
             if (!rows.length) {
-                const none = st.chats.length === 0;
-                list.append(none
-                    ? el('div', 'g-empty', txt('span', 'big', '💬'), 'Belum ada pesan. Ketuk “Pesan baru” untuk mulai ngobrol.')
+                list.append(st.chats.length === 0
+                    ? el('div', 'g-empty', txt('span', 'big', '💬'), 'Belum ada pesan. Ketuk ikon pensil di kanan atas untuk mulai ngobrol.')
                     : el('div', 'g-empty', st.filter === 'requests' ? 'Tidak ada permintaan pesan.' : 'Tidak ada pesan yang cocok.'));
                 return;
             }
             rows.forEach(c => {
                 const row = el('button', 'g-crow' + (c.unread ? ' unread' : ''));
                 row.type = 'button';
-                row.append(avatar(c.user, 52),
-                    el('div', 't', txt('b', '', c.user.name), txt('span', '', (c.last.mine ? 'Kamu: ' : '') + c.last.body + ' · ' + ago(c.last.created_at))));
+                const sub = c.last.mine ? 'Terkirim ' + ago(c.last.created_at) : c.last.body + ' · ' + ago(c.last.created_at);
+                row.append(avatar(c.user, 56), el('div', 't', txt('b', '', c.user.name), txt('span', '', sub)));
                 if (c.unread) row.append(el('span', 'dot'));
                 row.addEventListener('click', () => openChat(c.user));
                 list.append(row);
@@ -1116,107 +1169,186 @@
                 st.loaded = true;
                 const sig = JSON.stringify(st.notes.map(x => x.user.id + x.created_at));
                 if (sig !== st.sig) { st.sig = sig; drawNotes(); }
+                paintChips();
                 drawList();
             } catch (e) {
                 if (!st.loaded) { list.innerHTML = ''; list.append(txt('div', 'g-empty', e.message)); }
             }
         }
+        paintChips();
         drawNotes();
         chatRefresh = () => { st.sig = null; load(); };
         load();
         timers.chats = setInterval(() => { if (tab === 'chat' && !screens.length) load(); }, 8000);
     }
 
-    /* ---------- Editor catatan + lagu ---------- */
-    function songRow(s) {
-        const art = s.art ? (() => { const i = new Image(); i.src = s.art; i.alt = ''; return i; })() : el('div', 'noart', icon('music'));
-        return el('div', 'g-song', art, el('div', 't', txt('b', '', s.title), txt('span', '', s.artist)));
-    }
+    /* =====================================================
+       EDITOR CATATAN (layar penuh, gaya Instagram)
+       ===================================================== */
     function openNoteEditor(my, onDone) {
         let song = my && my.song ? Object.assign({}, my.song) : null;
-        const input = el('input', 'g-in');
-        input.type = 'text'; input.maxLength = 60; input.placeholder = 'Bagikan sesuatu...';
+        let color = my && my.color ? my.color : '';
+        const input = el('input', 'g-ninput');
+        input.type = 'text'; input.maxLength = 60; input.placeholder = 'Catatan...';
         input.value = my ? my.body : '';
-        const count = txt('div', 'g-count', input.value.length + '/60');
-        const preview = el('div', 'g-npreview');
-        const songBox = el('div', 'g-songsel');
-        const share = btn('g-link', 'Bagikan');
-
-        function paintPrev() {
-            const body = input.value.trim();
-            preview.innerHTML = '';
-            const b = noteBubble(body || song ? { body, song } : null);
-            b.disabled = true;
-            preview.append(b);
-        }
-        function paintSong() {
-            songBox.innerHTML = '';
-            if (song) {
-                songBox.append(songRow(song), el('div', 'row',
-                    btn('g-secondary', 'Ganti lagu', pick, 'music'),
-                    btn('g-secondary g-danger', 'Hapus lagu', () => { song = null; paintSong(); paintPrev(); })));
-            } else songBox.append(btn('g-secondary g-addsong', 'Tambah lagu', pick, 'music'));
-        }
-        function pick() { openSongPicker(s => { song = s; paintSong(); paintPrev(); }); }
-        input.addEventListener('input', () => { count.textContent = input.value.length + '/60'; paintPrev(); });
-
-        const body = el('div', 'g-pad', preview, el('div', 'g-form', input, count), songBox,
-            txt('p', 'g-mute g-note-small', 'Catatan terlihat oleh teman selama 24 jam. Lagu yang dipilih diputar 30 detik saat catatan diketuk.'));
-        if (my) body.append(btn('g-secondary g-danger g-delnote', 'Hapus catatan', async () => {
+        input.autocomplete = 'off';
+        const songLine = el('div', 'g-csong');
+        const bubble = el('div', 'g-cbub', songLine, input);
+        const palBtn = btn('g-palbtn', '', () => openBubbleEditor(color, input.value.trim(), c => { color = c; paintBub(); }), 'palette', 'Warna gelembung');
+        const stage = el('div', 'g-cstage', bubble, el('div', 'g-cav', avatar(me, 128), palBtn));
+        const musicBtn = btn('g-pillbtn', '', () => openSongPicker(s => { song = s; paintBub(); }), 'music', 'Tambah lagu');
+        const btns = el('div', 'g-cbtns', musicBtn);
+        stage.append(btns);
+        if (my) stage.append(btn('g-link g-delnote2', 'Hapus catatan', async () => {
             try { await call('note_clear'); popScreen(); gtoast('Catatan dihapus'); if (onDone) onDone(); }
             catch (e) { gtoast(e.message); }
         }));
-        pushScreen(el('div', '', screenHead('Catatan baru', share), el('div', 'g-sbody', body)));
-        paintSong(); paintPrev();
+        const share = btn('g-sharebtn', 'Bagikan');
+        const bottom = el('div', 'g-cbottom', el('div', 'g-cshare-with', icon('user'), 'Bagikan ke teman', icon('chevR')), share);
+        const scr = el('div', 'g-ncomp', btn('g-ibtn g-cx', '', popScreen, 'close', 'Tutup'), stage, bottom);
+
+        function paintBub() {
+            tintBubble(bubble, color);
+            songLine.innerHTML = '';
+            songLine.hidden = !song;
+            if (song) {
+                songLine.append(el('div', 'sl', eq(), txt('b', '', song.title),
+                    btn('g-xs', '', () => { song = null; paintBub(); }, 'close', 'Hapus lagu')),
+                    txt('div', 'sa', song.artist));
+            }
+        }
+        const vv = window.visualViewport;
+        const fit = () => { if (vv) { scr.style.bottom = 'auto'; scr.style.height = vv.height + 'px'; } };
+        if (vv) vv.addEventListener('resize', fit);
+        pushScreen(scr, () => { if (vv) vv.removeEventListener('resize', fit); stopAudio(); });
+        fit();
+        paintBub();
+        setTimeout(() => input.focus(), 350);
+
         share.addEventListener('click', async () => {
             const text = input.value.trim();
             if (!text && !song) { gtoast('Tulis catatan atau pilih lagu dulu'); return; }
             share.disabled = true;
             try {
-                await call('note_set', { body: text, song });
+                await call('note_set', { body: text, song, color });
                 popScreen();
                 gtoast('Catatan dibagikan ✨');
                 if (onDone) onDone();
             } catch (e) { gtoast(e.message); share.disabled = false; }
         });
     }
+
+    /* ---------- Editor warna gelembung ---------- */
+    function openBubbleEditor(current, text, onApply) {
+        let sel = current || '';
+        const bubble = el('div', 'g-cbub', txt('div', 'g-btext', text || 'Catatan...'));
+        const pages = el('div', 'g-pages');
+        const dots = el('div', 'g-dots');
+        const stage = el('div', 'g-bstage', bubble, el('div', 'g-cav', avatar(me, 112)));
+        function paint() {
+            tintBubble(bubble, sel);
+            pages.querySelectorAll('.g-sw').forEach(b => b.classList.toggle('on', b.dataset.c === sel));
+        }
+        BUBBLE_COLORS.forEach((row, idx) => {
+            const page = el('div', 'g-page');
+            row.forEach(c => {
+                const b = el('button', 'g-sw', el('i'));
+                b.type = 'button';
+                b.dataset.c = c;
+                b.setAttribute('aria-label', 'Warna ' + c);
+                b.firstChild.style.setProperty('--c', c);
+                b.addEventListener('click', () => { sel = c; paint(); });
+                page.append(b);
+            });
+            pages.append(page);
+            dots.append(el('i', idx === 0 ? 'on' : ''));
+        });
+        pages.addEventListener('scroll', () => {
+            const idx = Math.round(pages.scrollLeft / Math.max(1, pages.clientWidth));
+            dots.querySelectorAll('i').forEach((d, k) => d.classList.toggle('on', k === idx));
+        });
+        const apply = btn('g-primary', 'Terapkan', () => { onApply(sel); popScreen(); });
+        const clear = btn('g-link', 'Hapus warna', () => { sel = ''; paint(); });
+        const scr = el('div', '', screenHead('Editor gelembung'), stage, pages, dots, el('div', 'g-bactions', apply, clear));
+        pushScreen(scr);
+        paint();
+    }
+
+    /* ---------- Pemilih lagu (bottom sheet) ---------- */
     function openSongPicker(onPick) {
+        let tabId = 'foryou', n = 0, t;
         const q = el('input', 'g-in');
-        q.type = 'search'; q.placeholder = 'Cari judul lagu atau artis...'; q.maxLength = 60;
+        q.type = 'search'; q.placeholder = 'Cari lagu...'; q.maxLength = 60;
+        const chips = el('div', 'g-chips');
         const list = el('div', 'g-sbody');
-        pushScreen(el('div', '', screenHead('Pilih lagu'), el('div', 'g-pad', q), list), stopAudio);
-        let t, n = 0;
+        const scr = el('div', '', el('div', 'g-grab'), el('div', 'g-msearch', icon('search'), q), chips, list);
+        pushScreen(scr, stopAudio);
+        scr.classList.add('sheet');
+        const TABS = [['foryou', 'Untuk kamu'], ['trending', 'Trending'], ['saved', 'Tersimpan']];
+        const DEF = { foryou: 'pop indonesia', trending: 'top hits' };
+
+        function paintTabs() {
+            chips.innerHTML = '';
+            TABS.forEach(([id, label]) => {
+                const b = el('button', 'g-chip' + (tabId === id && !q.value.trim() ? ' on' : ''));
+                b.type = 'button';
+                b.textContent = label;
+                b.addEventListener('click', () => { tabId = id; q.value = ''; paintTabs(); load(); });
+                chips.append(b);
+            });
+        }
         function hint(s) { list.innerHTML = ''; list.append(txt('div', 'g-empty', s)); }
+        function songItem(s) {
+            const row = el('div', 'g-srow');
+            row.tabIndex = 0;
+            row.setAttribute('role', 'button');
+            const art = el('button', 'g-sart');
+            art.type = 'button';
+            art.setAttribute('aria-label', 'Putar pratinjau');
+            if (s.art) { const i = new Image(); i.src = s.art; i.alt = ''; i.loading = 'lazy'; art.append(i); } else art.append(icon('music'));
+            art.append(el('span', 'pl', icon('play')));
+            art.addEventListener('click', e => { e.stopPropagation(); toggleAudio(s.url, row, 'pick' + s.url); });
+            const info = el('div', 't', txt('b', '', s.title), txt('span', '', s.artist + (s.dur ? ' • ' + fmtTime(s.dur / 1000) : '')));
+            const bm = btn('g-ibtn g-bm', '', e => {
+                e.stopPropagation();
+                const on = toggleSaved(s);
+                paintBm();
+                if (tabId === 'saved' && !on && !q.value.trim()) load();
+            }, '', 'Simpan lagu');
+            function paintBm() { bm.innerHTML = ''; bm.append(icon(isSaved(s) ? 'bookmarkFill' : 'bookmark')); }
+            paintBm();
+            const choose = () => { stopAudio(); popScreen(); onPick(s); };
+            row.addEventListener('click', choose);
+            row.addEventListener('keydown', e => { if (e.key === 'Enter') choose(); });
+            row.append(art, info, bm);
+            return row;
+        }
         async function load() {
-            const term = q.value.trim();
-            if (!term) { hint('Ketik judul lagu atau nama artis.'); return; }
             const my = ++n;
+            const term = q.value.trim();
+            if (!term && tabId === 'saved') {
+                if (!savedSongs.length) { hint('Belum ada lagu tersimpan. Ketuk ikon bookmark pada lagu.'); return; }
+                list.innerHTML = '';
+                savedSongs.forEach(s => list.append(songItem(s)));
+                return;
+            }
             list.innerHTML = '';
             list.append(el('div', 'g-spin'));
             try {
-                const res = await fetch('https://itunes.apple.com/search?media=music&entity=song&limit=20&term=' + encodeURIComponent(term));
+                const res = await fetch('https://itunes.apple.com/search?media=music&entity=song&country=ID&limit=25&term=' + encodeURIComponent(term || DEF[tabId]));
                 const j = await res.json();
                 if (my !== n) return;
                 const items = (j.results || []).filter(r => r.previewUrl && r.trackName);
                 if (!items.length) { hint('Lagu tidak ditemukan.'); return; }
                 list.innerHTML = '';
-                items.forEach(r => {
-                    const s = { title: r.trackName, artist: r.artistName || '', url: r.previewUrl, art: r.artworkUrl100 || '' };
-                    const row = el('div', 'g-crow g-songrow');
-                    row.tabIndex = 0;
-                    row.setAttribute('role', 'button');
-                    const play = btn('g-ibtn g-playbtn', '', e => { e.stopPropagation(); toggleAudio(s.url, row, 'pick' + s.url); }, 'play', 'Putar pratinjau');
-                    row.append(songRow(s), play);
-                    const choose = () => { stopAudio(); popScreen(); onPick(s); };
-                    row.addEventListener('click', choose);
-                    row.addEventListener('keydown', e => { if (e.key === 'Enter') choose(); });
-                    list.append(row);
-                });
+                items.forEach(r => list.append(songItem({
+                    title: r.trackName, artist: r.artistName || '', url: r.previewUrl, art: r.artworkUrl100 || '', dur: r.trackTimeMillis || 0
+                })));
             } catch (e) { if (my === n) hint('Pencarian lagu gagal. Periksa koneksi internet.'); }
         }
-        q.addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 400); });
-        hint('Ketik judul lagu atau nama artis.');
-        setTimeout(() => q.focus(), 300);
+        q.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { paintTabs(); load(); }, 400); });
+        paintTabs();
+        load();
     }
 
     function openUserSearch() {
