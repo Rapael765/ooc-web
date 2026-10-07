@@ -1,9 +1,9 @@
 const crypto = require('crypto');
 const { sb, table, clean, handler, SB_URL } = require('./_lib');
 
-// Backend OOCgram: akun, feed, story, catatan, dan chat pribadi.
+// Backend OOCgram: akun, feed, story, catatan (bisa berlagu), video, dan chat pribadi.
 // Memakai Supabase yang sudah terhubung (SUPABASE_URL & SUPABASE_SERVICE_ROLE_KEY).
-// Tabel dibuat sekali lewat SQL Editor di Supabase (lihat file oocgram.sql).
+// Tabel dibuat lewat SQL Editor di Supabase (lihat file oocgram.sql + SQL tambahan v3).
 // (opsional) GRAM_SECRET = teks acak panjang untuk menandatangani sesi login.
 
 const SECRET = process.env.GRAM_SECRET ||
@@ -14,6 +14,7 @@ const TOKEN_TTL = 30 * DAY;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const enc = encodeURIComponent;
 const USER_COLS = 'id,username,name,avatar,bio';
+const VIDEO_TYPES = { 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov' };
 
 const fail = (status, message) => { const e = new Error(message); e.status = status; return e; };
 const pub = u => ({ id: u.id, username: u.username, name: u.name || u.username, avatar: u.avatar || '', bio: u.bio || '' });
@@ -62,7 +63,7 @@ function verify(token) {
   } catch (e) { return null; }
 }
 
-/* ---------- Gambar (Supabase Storage, bucket dibuat otomatis) ---------- */
+/* ---------- Gambar & video (Supabase Storage, bucket dibuat otomatis) ---------- */
 let bucketReady = false;
 async function ensureBucket() {
   if (bucketReady) return;
@@ -98,6 +99,28 @@ async function dropImage(url) {
   if (i < 0) return;
   try { await sb('/storage/v1/object/' + BUCKET + '/' + url.slice(i + k.length), { method: 'DELETE' }); } catch (e) { /* abaikan */ }
 }
+// Video diunggah langsung dari HP ke Supabase lewat tautan bertanda tangan
+// (supaya tidak kena batas ukuran request Vercel). Di sini hanya alamatnya yang divalidasi.
+function videoUrl(v, folder) {
+  v = String(v || '');
+  if (!v) return '';
+  const pre = SB_URL + '/storage/v1/object/public/' + BUCKET + '/' + folder + '/';
+  if (!v.startsWith(pre) || v.length > 300 || /[\s"'<>]/.test(v)) throw fail(400, 'Alamat video tidak valid');
+  return v;
+}
+function cleanSong(s) {
+  if (!s || typeof s !== 'object') return null;
+  const ok = u => {
+    try {
+      const x = new URL(String(u));
+      return x.protocol === 'https:' && /(^|\.)(mzstatic\.com|apple\.com)$/.test(x.hostname) && String(u).length < 400;
+    } catch (e) { return false; }
+  };
+  if (!ok(s.url)) return null;
+  const title = clean(String(s.title || ''), 80);
+  if (!title) return null;
+  return { title, artist: clean(String(s.artist || ''), 80), url: String(s.url), art: ok(s.art) ? String(s.art) : '' };
+}
 
 /* ---------- Pembantu data ---------- */
 async function usersById(ids) {
@@ -120,7 +143,7 @@ async function enrichPosts(posts, me) {
   likes.forEach(l => { lc[l.post_id] = (lc[l.post_id] || 0) + 1; if (l.user_id === me.id) mine[l.post_id] = true; });
   comments.forEach(c => { cc[c.post_id] = (cc[c.post_id] || 0) + 1; });
   return posts.map(p => ({
-    id: p.id, image: p.image, caption: p.caption || '', created_at: p.created_at,
+    id: p.id, image: p.image, video: p.video || '', caption: p.caption || '', created_at: p.created_at,
     user: users[p.user_id] || { id: p.user_id, username: 'pengguna', name: 'Pengguna', avatar: '', bio: '' },
     likes: lc[p.id] || 0, liked: !!mine[p.id], comments: cc[p.id] || 0
   }));
@@ -137,6 +160,10 @@ async function followFlags(meId, ids) {
 }
 const countOf = async q => (await table('gram_follows', q + '&limit=1000')).length;
 const since24 = () => enc(new Date(Date.now() - DAY).toISOString());
+const noteOut = (r, user) => ({
+  user, body: r.body || '', created_at: r.created_at,
+  song: r.song_url ? { title: r.song_title || '', artist: r.song_artist || '', url: r.song_url, art: r.song_art || '' } : null
+});
 
 /* ---------- Aksi ---------- */
 const open = {
@@ -174,27 +201,50 @@ const open = {
 const authed = {
   async me(_b, me) { return { user: pub(me) }; },
 
+  /* --- Unggah video (tautan bertanda tangan ke Supabase Storage) --- */
+  async upload_url(b, me) {
+    if (limited('up:' + me.id, 20, 3600 * 1000)) throw fail(429, 'Terlalu banyak unggahan. Coba lagi nanti.');
+    const folder = b.folder === 'stories' ? 'stories' : 'posts';
+    const mime = String(b.mime || '').split(';')[0].toLowerCase();
+    const ext = VIDEO_TYPES[mime];
+    if (!ext) throw fail(400, 'Format video tidak didukung (pakai MP4, MOV, atau WebM)');
+    await ensureBucket();
+    const path = folder + '/' + Date.now() + '-' + crypto.randomBytes(5).toString('hex') + '.' + ext;
+    let r = await sb('/storage/v1/object/upload/sign/' + BUCKET + '/' + path, {
+      method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' }
+    });
+    if (r && typeof r.json === 'function') r = await r.json();
+    const u = r && (r.url || r.signedURL);
+    if (!u) throw fail(500, 'Gagal membuat tautan unggah video');
+    const full = /^https?:/i.test(u) ? u : SB_URL + '/storage/v1' + (u.charAt(0) === '/' ? u : '/' + u);
+    return { upload_url: full, public_url: SB_URL + '/storage/v1/object/public/' + BUCKET + '/' + path };
+  },
+
   /* --- Feed --- */
   async feed(b, me) {
     const d = b.before ? new Date(b.before) : null;
     const filter = d && !isNaN(d) ? '&created_at=lt.' + enc(d.toISOString()) : '';
     let who = '';
     if (b.scope === 'following') who = '&user_id=in.(' + [me.id].concat(await followingIds(me.id)).join(',') + ')';
-    const posts = await table('gram_posts', '?select=id,user_id,image,caption,created_at&order=created_at.desc&limit=15' + filter + who);
+    const posts = await table('gram_posts', '?select=id,user_id,image,video,caption,created_at&order=created_at.desc&limit=15' + filter + who);
     return { posts: await enrichPosts(posts, me) };
   },
   async post_create(b, me) {
     if (limited('post:' + me.id, 20, 3600 * 1000)) throw fail(429, 'Terlalu banyak posting. Coba lagi nanti.');
-    const image = await saveImage(b.image, 'posts');
-    const rows = await table('gram_posts', '', { method: 'POST', json: { user_id: me.id, image, caption: clean(b.caption, 500) } });
+    const video = videoUrl(b.video, 'posts');
+    const image = await saveImage(b.image, 'posts'); // untuk video: gambar sampul
+    const row = { user_id: me.id, image, caption: clean(b.caption, 500) };
+    if (video) row.video = video;
+    const rows = await table('gram_posts', '', { method: 'POST', json: row });
     return { post: (await enrichPosts(rows, me))[0] };
   },
   async post_delete(b, me) {
     const id = uuid(b.id);
-    const rows = await table('gram_posts', '?id=eq.' + id + '&user_id=eq.' + me.id + '&select=id,image');
+    const rows = await table('gram_posts', '?id=eq.' + id + '&user_id=eq.' + me.id + '&select=id,image,video');
     if (!rows.length) throw fail(404, 'Postingan tidak ditemukan');
     await table('gram_posts', '?id=eq.' + id, { method: 'DELETE' });
     await dropImage(rows[0].image);
+    await dropImage(rows[0].video);
     return { ok: true };
   },
   async like(b, me) {
@@ -224,12 +274,12 @@ const authed = {
   async stories(b, me) {
     let who = '';
     if (b.scope === 'following') who = '&user_id=in.(' + [me.id].concat(await followingIds(me.id)).join(',') + ')';
-    const rows = await table('gram_stories', '?created_at=gte.' + since24() + '&select=id,user_id,image,caption,created_at&order=created_at.asc&limit=300' + who);
+    const rows = await table('gram_stories', '?created_at=gte.' + since24() + '&select=id,user_id,image,video,caption,created_at&order=created_at.asc&limit=300' + who);
     const users = await usersById(rows.map(r => r.user_id));
     const groups = {};
     rows.forEach(r => {
       (groups[r.user_id] = groups[r.user_id] || { user: users[r.user_id] || pub({ id: r.user_id, username: 'pengguna' }), items: [] })
-        .items.push({ id: r.id, image: r.image, caption: r.caption || '', created_at: r.created_at });
+        .items.push({ id: r.id, image: r.image, video: r.video || '', caption: r.caption || '', created_at: r.created_at });
     });
     const list = Object.values(groups).sort((a, b) =>
       new Date(b.items[b.items.length - 1].created_at) - new Date(a.items[a.items.length - 1].created_at));
@@ -237,35 +287,44 @@ const authed = {
   },
   async story_add(b, me) {
     if (limited('story:' + me.id, 20, 3600 * 1000)) throw fail(429, 'Terlalu banyak story. Coba lagi nanti.');
+    const video = videoUrl(b.video, 'stories');
     const image = await saveImage(b.image, 'stories');
-    const rows = await table('gram_stories', '', { method: 'POST', json: { user_id: me.id, image, caption: clean(b.caption, 120) } });
-    return { story: { id: rows[0].id, image, caption: rows[0].caption || '', created_at: rows[0].created_at } };
+    const row = { user_id: me.id, image, caption: clean(b.caption, 120) };
+    if (video) row.video = video;
+    const rows = await table('gram_stories', '', { method: 'POST', json: row });
+    return { story: { id: rows[0].id, image, video, caption: rows[0].caption || '', created_at: rows[0].created_at } };
   },
   async story_delete(b, me) {
     const id = uuid(b.id);
-    const rows = await table('gram_stories', '?id=eq.' + id + '&user_id=eq.' + me.id + '&select=id,image');
+    const rows = await table('gram_stories', '?id=eq.' + id + '&user_id=eq.' + me.id + '&select=id,image,video');
     if (!rows.length) throw fail(404, 'Story tidak ditemukan');
     await table('gram_stories', '?id=eq.' + id, { method: 'DELETE' });
     await dropImage(rows[0].image);
+    await dropImage(rows[0].video);
     return { ok: true };
   },
 
-  /* --- Catatan (teks singkat, hilang setelah 24 jam) --- */
+  /* --- Catatan (teks singkat + lagu opsional, hilang setelah 24 jam) --- */
   async notes(_b, me) {
-    const rows = await table('gram_notes', '?created_at=gte.' + since24() + '&select=user_id,body,created_at&order=created_at.desc&limit=100');
+    const rows = await table('gram_notes', '?created_at=gte.' + since24() + '&select=user_id,body,created_at,song_title,song_artist,song_url,song_art&order=created_at.desc&limit=100');
     const users = await usersById(rows.map(r => r.user_id));
-    return { notes: rows.filter(r => users[r.user_id]).map(r => ({ user: users[r.user_id], body: r.body, created_at: r.created_at })) };
+    return { notes: rows.filter(r => users[r.user_id]).map(r => noteOut(r, users[r.user_id])) };
   },
   async note_set(b, me) {
     const body = clean(b.body, 60);
-    if (!body) throw fail(400, 'Catatan kosong');
-    const row = { user_id: me.id, body, created_at: new Date().toISOString() };
+    const song = cleanSong(b.song);
+    if (!body && !song) throw fail(400, 'Catatan kosong');
+    const row = {
+      user_id: me.id, body: body || '', created_at: new Date().toISOString(),
+      song_title: song ? song.title : null, song_artist: song ? song.artist : null,
+      song_url: song ? song.url : null, song_art: song ? song.art : null
+    };
     await sb('/rest/v1/gram_notes?on_conflict=user_id', {
       method: 'POST',
       body: JSON.stringify(row),
       headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=representation' }
     });
-    return { note: { user: pub(me), body, created_at: row.created_at } };
+    return { note: noteOut(row, pub(me)) };
   },
   async note_clear(_b, me) {
     await table('gram_notes', '?user_id=eq.' + me.id, { method: 'DELETE' });
@@ -287,7 +346,8 @@ const authed = {
     const rows = await table('gram_users', '?username=eq.' + enc(username) + '&select=' + USER_COLS);
     if (!rows.length) throw fail(404, 'Pengguna tidak ditemukan');
     const u = rows[0];
-    const posts = await table('gram_posts', '?user_id=eq.' + u.id + '&select=id,image,caption,created_at&order=created_at.desc&limit=60');
+    const posts = await table('gram_posts', '?user_id=eq.' + u.id + '&select=id,image,video,caption,created_at&order=created_at.desc&limit=60');
+    posts.forEach(p => { p.video = p.video || ''; });
     const [followers, following, flags] = await Promise.all([
       countOf('?following_id=eq.' + u.id + '&select=follower_id'),
       countOf('?follower_id=eq.' + u.id + '&select=following_id'),
@@ -334,14 +394,18 @@ const authed = {
     const convo = {};
     rows.forEach(m => {
       const other = m.from_id === me.id ? m.to_id : m.from_id;
-      const c = convo[other] = convo[other] || { other, last: m, unread: 0 };
+      const c = convo[other] = convo[other] || { other, last: m, unread: 0, replied: false };
       if (m.to_id === me.id && !m.is_read) c.unread++;
+      if (m.from_id === me.id) c.replied = true;
     });
-    const users = await usersById(Object.keys(convo));
+    const ids = Object.keys(convo);
+    const [users, flags] = await Promise.all([usersById(ids), followFlags(me.id, ids)]);
     const list = Object.values(convo).filter(c => users[c.other]).map(c => ({
       user: users[c.other],
       last: { id: c.last.id, body: c.last.body, mine: c.last.from_id === me.id, created_at: c.last.created_at },
-      unread: c.unread
+      unread: c.unread,
+      following: flags.has(c.other),
+      replied: c.replied
     }));
     return { chats: list };
   },
@@ -396,8 +460,10 @@ module.exports = handler(async (req, res) => {
   } catch (e) {
     if (e && e.status) return res.status(e.status).json({ error: e.message });
     if (/gram_\w+/.test(String(e && e.message)) && /(relation|table|schema cache|does not exist|Could not find)/i.test(e.message)) {
-      // SEMENTARA (debug): tampilkan error asli dari Supabase
-      return res.status(500).json({ error: 'DEBUG: ' + e.message });
+      return res.status(500).json({ error: 'Tabel OOCgram belum lengkap di Supabase. Jalankan SQL tambahan v3 di SQL Editor.' });
+    }
+    if (/(video|song_)/.test(String(e && e.message)) && /(column|schema cache)/i.test(e.message)) {
+      return res.status(500).json({ error: 'Kolom video/lagu belum ada di Supabase. Jalankan SQL tambahan v3 di SQL Editor.' });
     }
     throw e;
   }
