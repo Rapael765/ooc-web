@@ -311,3 +311,203 @@ html.gram-open, html.gram-open body { overflow: hidden !important; }
     .g-screen, .g-ind { transition: none; }
     .g-bigheart.pop, .g-ibtn.like.on .g-ic svg, .g-spin { animation-duration: .01s; }
 }
+
+/* =====================================================
+   OOCgram v3.0 - TAMBAHAN
+   Tempel di PALING BAWAH gram.css (jangan hapus isi lama).
+   ===================================================== */
+
+/* ---------- Video ---------- */
+.g-sv-vid { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+video.g-pimg { display: block; }
+.g-grid button { position: relative; }
+.g-vbadge { position: absolute; top: 6px; right: 6px; color: #fff; filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .6)); pointer-events: none; }
+.g-vbadge .g-ic svg { width: 18px; height: 18px; fill: currentColor; stroke: none; }
+
+/* ---------- Kamera: ketuk = foto, tahan = video ---------- */
+.g-shutter { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; transition: transform .2s, border-color .2s, background .2s; }
+.g-shutter.rec { transform: scale(1.18); border-color: var(--g-red); background: var(--g-red); animation: g-recpulse 1s ease-in-out infinite; }
+@keyframes g-recpulse { 50% { box-shadow: 0 0 0 10px rgba(237, 73, 86, .3); } }
+.g-rectime {
+    position: absolute; top: calc(60px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%);
+    padding: 3px 12px; border-radius: 14px; background: var(--g-red); color: #fff; font-weight: 700; font-size: .85rem; z-index: 3;
+}
+.g-cam-hint {
+    position: absolute; left: 0; right: 0; bottom: calc(204px + env(safe-area-inset-bottom, 0px));
+    text-align: center; color: rgba(255, 255, 255, .85); font-size: .8rem; text-shadow: 0 1px 4px rgba(0, 0, 0, .7); pointer-events: none;
+}
+video.g-edit-img { display: block; }
+
+/* ---------- Pesan: cari, catatan, filter ---------- */
+.g-msearch {
+    display: flex; align-items: center; gap: 8px; margin: 4px 12px 6px; padding: 0 14px; height: 44px;
+    background: var(--g-soft); border-radius: 22px; color: var(--g-mute);
+}
+.g-msearch .g-ic svg { width: 20px; height: 20px; }
+.g-msearch .g-in { background: none; border: 0; padding: 8px 0; flex: 1; width: auto; min-width: 0; }
+
+.g-nrow { display: flex; gap: 6px; overflow-x: auto; padding: 14px 10px 8px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.g-nrow::-webkit-scrollbar { display: none; }
+.g-nitem2 { flex: 0 0 auto; width: 92px; display: flex; flex-direction: column; align-items: center; text-align: center; justify-content: flex-end; }
+.g-nitem2 .nav { position: relative; z-index: 1; border-radius: 50%; }
+.g-nitem2 .nm { display: block; max-width: 100%; margin-top: 6px; font-size: .78rem; color: var(--g-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.g-nbub {
+    position: relative; z-index: 2; width: max-content; max-width: 112px; margin-bottom: -14px; padding: 6px 11px;
+    background: var(--g-soft); color: var(--g-fg); border-radius: 18px; font-size: .74rem; line-height: 1.25; text-align: center;
+    overflow-wrap: anywhere; box-shadow: 0 1px 3px rgba(0, 0, 0, .15); cursor: pointer;
+}
+.g-nbub::after { content: ""; position: absolute; left: 16px; bottom: -5px; width: 9px; height: 9px; border-radius: 50%; background: var(--g-soft); }
+.g-nbub.empty { color: var(--g-mute); }
+.g-nbub:disabled { cursor: default; opacity: 1; }
+.g-nbub .sl { display: flex; align-items: center; justify-content: center; gap: 4px; }
+.g-nbub .sl b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80px; }
+.g-nbub .sa { color: var(--g-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-nbub .st { margin-top: 1px; }
+.g-nbub.song .st { color: var(--g-fg); }
+.g-nbub.playing { outline: 2px solid var(--g-blue); }
+
+.g-eq { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 11px; flex-shrink: 0; }
+.g-eq i { display: block; width: 2px; background: currentColor; border-radius: 1px; height: 45%; }
+.g-eq i:nth-child(2) { height: 100%; }
+.g-eq i:nth-child(3) { height: 65%; }
+.playing .g-eq i { animation: g-eqbar .7s ease-in-out infinite; }
+.playing .g-eq i:nth-child(2) { animation-delay: .15s; }
+.playing .g-eq i:nth-child(3) { animation-delay: .3s; }
+@keyframes g-eqbar { 0%, 100% { height: 30%; } 50% { height: 100%; } }
+
+.g-chips { display: flex; gap: 8px; overflow-x: auto; padding: 6px 12px 10px; scrollbar-width: none; }
+.g-chips::-webkit-scrollbar { display: none; }
+.g-chip { flex: 0 0 auto; padding: 7px 14px; border: 1px solid var(--g-line); border-radius: 18px; font-weight: 600; font-size: .88rem; white-space: nowrap; text-align: center; }
+.g-chip.on { background: var(--g-soft); }
+
+/* ---------- Editor catatan & pemilih lagu ---------- */
+.g-npreview { display: flex; justify-content: center; padding: 18px 0 26px; }
+.g-npreview .g-nbub { margin-bottom: 0; font-size: .9rem; max-width: 240px; padding: 9px 16px; }
+.g-npreview .g-nbub .sl b { max-width: 190px; }
+.g-songsel { display: grid; gap: 10px; margin-top: 14px; }
+.g-songsel .row { display: flex; gap: 8px; }
+.g-songsel .row > * { flex: 1; }
+.g-addsong, .g-songsel .g-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.g-addsong .g-ic svg, .g-songsel .g-ic svg { width: 18px; height: 18px; }
+.g-delnote { width: 100%; margin-top: 18px; }
+.g-song { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; }
+.g-song img, .g-song .noart { width: 46px; height: 46px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: var(--g-soft); display: grid; place-items: center; color: var(--g-mute); }
+.g-song .t { flex: 1; min-width: 0; }
+.g-song .t b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-song .t span { display: block; color: var(--g-mute); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-songrow.playing { background: var(--g-soft); }
+.g-playbtn { color: var(--g-blue); }
+.g-songrow.playing .g-playbtn { color: var(--g-red); }
+/* =====================================================
+   OOCgram v3.1 - TAMBAHAN ke-2
+   Tempel di PALING BAWAH gram.css, SETELAH gram-tambahan.css.
+   ===================================================== */
+
+/* ---------- Halaman Pesan: tanpa bar atas aplikasi ---------- */
+.g-app.nochrome .g-top { display: none; }
+.g-app.nochrome .g-view { padding-top: env(safe-area-inset-top, 0px); }
+.g-chat-top { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 2px; height: 52px; }
+.g-chat-title { display: flex; align-items: center; gap: 4px; }
+.g-chat-title b { font-size: 1.3rem; font-weight: 700; }
+.g-chat-title .g-ic svg { width: 18px; height: 18px; }
+
+.g-searchrow { display: flex; align-items: center; gap: 14px; margin: 6px 14px 2px; }
+.g-searchrow .g-msearch { flex: 1; margin: 0; min-width: 0; }
+.g-filterlink { color: var(--g-blue); font-weight: 600; font-size: 1.02rem; flex-shrink: 0; }
+.g-filterlink.on { text-decoration: underline; }
+
+.g-chips { padding: 8px 14px 10px; gap: 10px; }
+.g-chip { border: 0; border-radius: 12px; background: var(--g-soft); padding: 10px 16px; font-size: .95rem; display: inline-flex; align-items: center; gap: 7px; }
+.g-chip.on { background: var(--g-fg); color: var(--g-bg); }
+.g-chip .cdot { width: 8px; height: 8px; border-radius: 50%; background: var(--g-blue); }
+.g-chip .cnt { color: var(--g-mute); font-weight: 500; }
+.g-chip.on .cnt { color: inherit; opacity: .6; }
+.g-chip .g-ic svg { width: 16px; height: 16px; }
+
+.g-crow .t span { font-size: .93rem; }
+.g-crow .dot { width: 11px; height: 11px; margin-right: 4px; }
+
+/* ---------- Warna gelembung catatan ---------- */
+.g-nbub { background: var(--nb, var(--g-soft)); }
+.g-nbub::after { background: var(--nb, var(--g-soft)); }
+.g-nbub.colored { color: #fff; }
+.g-nbub.colored .sa { color: inherit; opacity: .75; }
+.g-nbub.colored.light { color: #111; }
+
+/* ---------- Editor catatan layar penuh ---------- */
+.g-ncomp { background: var(--g-bg); }
+.g-ncomp .g-cx { margin: calc(8px + env(safe-area-inset-top, 0px)) 0 0 8px; flex-shrink: 0; }
+.g-cstage { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; padding-top: 6vh; overflow: hidden; }
+.g-cbub {
+    position: relative; z-index: 2; min-width: 160px; max-width: 270px; margin-bottom: -26px; padding: 13px 22px;
+    border-radius: 28px; background: var(--nb, var(--g-soft)); color: var(--g-fg); text-align: center;
+}
+.g-cbub::before, .g-cbub::after { content: ""; position: absolute; border-radius: 50%; background: var(--nb, var(--g-soft)); }
+.g-cbub::after { left: 46%; bottom: -7px; width: 13px; height: 13px; }
+.g-cbub::before { left: 43%; bottom: -14px; width: 7px; height: 7px; }
+.g-cbub.colored { color: #fff; }
+.g-cbub.colored.light { color: #111; }
+.g-ninput { width: 100%; background: none; border: 0; outline: 0; text-align: center; font-size: 1.3rem; color: inherit; padding: 0; min-width: 0; }
+.g-ninput::placeholder { color: var(--g-mute); }
+.g-cbub.colored .g-ninput::placeholder { color: rgba(255, 255, 255, .7); }
+.g-cbub.colored.light .g-ninput::placeholder { color: rgba(0, 0, 0, .45); }
+.g-btext { font-size: 1.3rem; }
+.g-csong { display: flex; flex-direction: column; align-items: center; margin-bottom: 6px; }
+.g-csong .sl { display: flex; align-items: center; gap: 6px; font-weight: 700; }
+.g-csong .sl b { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-csong .sa { opacity: .75; font-size: .9rem; }
+.g-xs { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; opacity: .7; }
+.g-xs .g-ic svg { width: 14px; height: 14px; }
+.g-cav { position: relative; display: inline-block; }
+.g-palbtn {
+    position: absolute; right: 0; bottom: 0; width: 44px; height: 44px; border-radius: 50%;
+    background: var(--g-pop); border: 3px solid var(--g-bg); color: #e1306c; display: grid; place-items: center;
+}
+.g-palbtn .g-ic svg { width: 22px; height: 22px; }
+.g-cbtns { display: flex; gap: 12px; justify-content: center; margin-top: 22px; }
+.g-pillbtn { width: 54px; height: 42px; border-radius: 21px; border: 1px solid var(--g-line); display: grid; place-items: center; color: #ff2d75; }
+.g-delnote2 { margin-top: 16px; color: var(--g-red); }
+.g-cbottom { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 12px 16px calc(14px + env(safe-area-inset-bottom, 0px)); }
+.g-cshare-with { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.g-cshare-with .g-ic svg { width: 20px; height: 20px; }
+.g-sharebtn { padding: 14px 32px; border-radius: 28px; background: var(--g-blue); color: #fff; font-weight: 700; font-size: 1.05rem; }
+.g-sharebtn:disabled { opacity: .5; }
+
+/* ---------- Editor gelembung ---------- */
+.g-bstage { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding-top: 20px; }
+.g-pages { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; flex-shrink: 0; }
+.g-pages::-webkit-scrollbar { display: none; }
+.g-page { flex: 0 0 100%; scroll-snap-align: center; display: flex; justify-content: center; gap: 12px; padding: 6px 0; }
+.g-sw { width: 52px; height: 52px; border-radius: 13px; padding: 4px; border: 2px solid var(--g-line); display: grid; }
+.g-sw i { display: block; border-radius: 8px; background: var(--c); }
+.g-sw.on { border-color: var(--g-fg); }
+.g-dots { display: flex; justify-content: center; gap: 12px; margin: 16px 0 14px; flex-shrink: 0; }
+.g-dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--g-line); }
+.g-dots i.on { background: var(--g-fg); }
+.g-bactions { flex-shrink: 0; display: grid; gap: 6px; padding: 0 14px calc(12px + env(safe-area-inset-bottom, 0px)); text-align: center; }
+.g-bactions .g-primary { padding: 15px; border-radius: 28px; }
+
+/* ---------- Pemilih lagu: bottom sheet ---------- */
+.g-screen.sheet {
+    top: calc(44px + env(safe-area-inset-top, 0px)); border-radius: 18px 18px 0 0; transform: translateY(100%);
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, .35); transition: transform .28s ease;
+}
+.g-screen.sheet.in { transform: none; }
+.g-grab { width: 44px; height: 4px; border-radius: 2px; background: var(--g-mute); opacity: .6; margin: 10px auto 4px; flex-shrink: 0; }
+.g-screen.sheet .g-msearch { flex-shrink: 0; margin: 8px 14px 4px; }
+.g-screen.sheet .g-chips { flex-shrink: 0; }
+.g-srow { display: flex; align-items: center; gap: 14px; padding: 8px 14px; cursor: pointer; }
+.g-srow:active, .g-srow.playing { background: var(--g-soft); }
+.g-sart {
+    position: relative; width: 60px; height: 60px; border-radius: 10px; overflow: hidden; flex-shrink: 0;
+    background: var(--g-soft); display: grid; place-items: center; color: var(--g-mute);
+}
+.g-sart img { width: 100%; height: 100%; object-fit: cover; }
+.g-sart .pl { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .4); color: #fff; opacity: 0; transition: opacity .15s; }
+.g-sart .pl .g-ic svg { fill: currentColor; stroke: none; }
+.g-srow.playing .g-sart .pl { opacity: 1; }
+.g-srow .t { flex: 1; min-width: 0; }
+.g-srow .t b { display: block; font-size: 1rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-srow .t span { display: block; color: var(--g-mute); font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-bm { color: var(--g-fg); }
